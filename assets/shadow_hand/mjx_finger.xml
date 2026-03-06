@@ -1,0 +1,147 @@
+<mujoco model="finger">
+    <compiler angle="radian" meshdir="new_assets" autolimits="true" />
+
+    <option cone="elliptic" impratio="10" />
+
+    <extension>
+        <plugin plugin="mujoco.sensor.touch_grid" />
+    </extension>
+
+    <default>
+        <default class="right_hand">
+            <mesh scale="0.001 0.001 0.001" />
+            <joint axis="1 0 0" damping="0.05" armature="0.0002" frictionloss="0.01" />
+            <position forcerange="-1 1" />
+
+            <default class="thumb">
+                <default class="thbase">
+                    <joint axis="0 0 -1" range="-1.0472 1.0472" />
+                    <position kp="0.4" ctrlrange="-1.0472 1.0472" forcerange="-3 3" />
+                </default>
+                <default class="thproximal">
+                    <joint range="0 1.22173" />
+                    <position ctrlrange="0 1.22173" forcerange="-2 2" />
+                </default>
+                <default class="thhub">
+                    <joint range="-0.20944 0.20944" />
+                    <position kp="0.5" ctrlrange="-0.20944 0.20944" />
+                </default>
+                <default class="thmiddle">
+                    <joint axis="0 -1 0" range="-0.698132 0.698132" />
+                    <position kp="1.5" ctrlrange="-0.698132 0.698132" />
+                </default>
+                <default class="thdistal">
+                    <joint range="-0.261799 1.5708" />
+                    <position ctrlrange="-0.261799 1.5708" />
+                </default>
+            </default>
+
+            <default class="metacarpal">
+                <joint axis="0.573576 0 0.819152" range="0 0.785398" />
+                <position ctrlrange="0 0.785398" />
+            </default>
+            <default class="knuckle">
+                <joint axis="0 -1 0" range="-0.349066 0.349066" />
+                <position ctrlrange="-0.349066 0.349066" />
+            </default>
+            <default class="proximal">
+                <joint range="-0.261799 1.5708" />
+                <position ctrlrange="-0.261799 1.5708" />
+            </default>
+            <default class="middle_distal">
+                <joint range="0 1.5708" />
+                <position kp="0.5" ctrlrange="0 3.1415" />
+            </default>
+
+            <default class="plastic">
+                <geom solimp="0.5 0.99 0.0001" solref="0.005 1" />
+                <default class="plastic_visual">
+                    <geom type="mesh" material="black" contype="0" conaffinity="0" group="2" />
+                </default>
+                <default class="plastic_collision">
+                    <geom group="3" />
+                </default>
+            </default>
+        </default>
+
+    </default>
+
+
+    <worldbody>
+        <body name="rh_mfknuckle" pos="0.011 0 0.099">
+            <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.008"
+                diaginertia="3.2e-07 2.6e-07 2.6e-07" />
+            <!-- <joint name="rh_MFJ4" pos="0 0 0" axis="0 -1 0" range="-0.349066 0.349066"
+                actuatorfrcrange="-2 2" damping="0.1" /> -->
+            <geom pos="0 0 0.0005" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1"
+                density="0" rgba="0.6 0.6 0.6 1" mesh="f_knuckle_E3M5" />
+            <geom size="0.007 0.007 0.007" quat="0.707105 0 0.707108 0" type="box"
+                rgba="0.6 0.6 0.6 1" contype="0" conaffinity="0" />
+            <!-- <geom size="0.007 0.007" quat="0.707105 0 0.707108 0" type="box"
+                rgba="0.6 0.6 0.6 1" /> -->
+            <body name="rh_mfproximal">
+                <inertial pos="0 0 0.0225" quat="0.707107 0 0 0.707107" mass="0.03"
+                    diaginertia="1e-05 9.8e-06 1.8e-06" />
+                <joint name="rh_MFJ3" pos="0 0 0" axis="1 0 0" range="-0.261799 1.5708"
+                    actuatorfrcrange="-2 2" damping="0.1" />
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
+                    rgba="0.2 0.2 0.2 1" mesh="f_proximal_E3M5" />
+                <geom size="0.007 0.02 0.02" pos="0 0 0.025" type="box" rgba="0.2 0.2 0.2 1" />
+                <body name="rh_mfmiddle" pos="0 0 0.045">
+                    <inertial pos="0 0 0.0125" quat="0.707107 0 0 0.707107" mass="0.017"
+                        diaginertia="2.7e-06 2.6e-06 8.7e-07" />
+                    <joint name="rh_MFJ2" pos="0 0 0" axis="1 0 0" range="0 1.5708"
+                        actuatorfrcrange="-2 2" damping="0.1" />
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
+                        rgba="0.2 0.2 0.2 1" mesh="f_middle_E3M5" />
+                        <!-- updated finger box collision mesh -->
+                    <geom size="0.007 0.02 0.02" pos="0 0 0.0125" type="box" rgba="0.2 0.2 0.2 1" />
+                    <!-- <geom size="0.007 0.0125" pos="0 0 0.0125" type="box" rgba="0.2 0.2 0.2 1" /> -->
+                    <geom size="0.007" rgba="0.2 0.2 0.2 1" />
+                    <geom size="0.007" pos="0 0 0.025" rgba="0.2 0.2 0.2 1" />
+                    <body name="rh_mfdistal" pos="0 0 0.025">
+                        <inertial pos="0 0 0.0130769" quat="0.707107 0 0 0.707107" mass="0.013"
+                            diaginertia="1.28092e-06 1.12092e-06 5.3e-07" />
+                        <joint name="rh_MFJ1" pos="0 0 0" axis="1 0 0" range="0 1.5708"
+                            actuatorfrcrange="-2 2" damping="0.1" />
+                        <!-- <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"
+                            mesh="f_distal_mstXL" condim="6" /> -->
+                        <geom name="finger_tip" type="mesh" mesh="f_distal_mstXL" condim="6"
+                            solref="0.00001 1"
+                            rgba="0.3411764705882353 0.011764705882352941 0.08235294117647059 1" />
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <asset>
+        <material name="black" specular="0.5" shininess="0.25" rgba="0.16355 0.16355 0.16355 1" />
+        <material
+            name="gray" specular="0.0" shininess="0.25" rgba="0.80848 0.80848 0.80848 1" />
+        <material
+            name="metallic" specular="0" shininess="0.25" rgba="0.9 0.9 0.9 1" />
+
+        <mesh name="forearm_E3M5" file="forearm_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="forearm_collision_E3M5" file="forearm_collision_E3M5.stl"
+            scale="0.001 0.001 0.001" />
+        <mesh name="wrist_E3M5" file="wrist_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="palm_E3M5" file="palm_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="f_knuckle_E3M5" file="f_knuckle_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="f_proximal_E3M5" file="f_proximal_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="f_middle_E3M5" file="f_middle_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="f_distal_mstXL" file="f_distal_mstXL_20_pct.stl" scale="0.001 0.001 0.001" />
+        <mesh name="lf_metacarpal_E3M5" file="lf_metacarpal_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="th_proximal_E3M5" file="th_proximal_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="th_middle_E3M5" file="th_middle_E3M5.stl" scale="0.001 0.001 0.001" />
+        <mesh name="th_distal_mst" file="th_distal_mst.stl" scale="0.001 0.001 0.001" />
+
+    </asset>
+
+    <actuator>
+        <position name="rh_A_MFJ3" joint="rh_MFJ3" class="proximal" />
+        <position name="rh_A_MFJ2" joint="rh_MFJ2" class="proximal" />
+        <position name="rh_A_MFJ1" joint="rh_MFJ1" class="proximal" />
+    </actuator>
+
+</mujoco>

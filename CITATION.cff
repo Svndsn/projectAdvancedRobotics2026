@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Staven"
+  given-names: "Victor M"
+title: "mj_sim"
+version: 1.0
+date-released: 2024-05-02
+url: "https://gitlab.sdu.dk/sdurobotics/teaching/mj_sim"

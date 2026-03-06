@@ -1,93 +1,169 @@
-# Project Advanced Robotics 2026
+# mj_sim
 
+A repository to demonstrate, implement, test and learn control in MuJoCo.
 
+## Table of Contents
 
-## Getting started
+- [mj\_sim](#mj_sim)
+  - [Table of Contents](#table-of-contents)
+  - [Setup](#setup)
+    - [Getting Repository](#getting-repository)
+    - [Setting up a Virtual Environment](#setting-up-a-virtual-environment)
+    - [Activating a Virtual Environmentv](#activating-a-virtual-environmentv)
+  - [Installing Dependencies](#installing-dependencies)
+- [Real Time](#real-time)
+- [Learning](#learning)
+- [Docs](#docs)
+- [VSCODE Compatibility](#vscode-compatibility)
+- [License](#license)
+- [Cite this work](#cite-this-work)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Setup
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+### Getting Repository
+To get the repository clone it into your directory of choice
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+```bash
+git clone git@gitlab.sdu.dk:sdurobotics/teaching/mj_sim.git
 ```
-cd existing_repo
-git remote add origin https://gitlab.sdu.dk/inju/project_advanced_robotics_2026.git
-git branch -M main
-git push -uf origin main
+then go into the repository by
+```bash
+cd mj_sim
 ```
 
-## Integrate with your tools
+### Setting up a Virtual Environment
 
-* [Set up project integrations](https://gitlab.sdu.dk/inju/project_advanced_robotics_2026/-/settings/integrations)
+To isolate the project's dependencies, it's recommended to use a virtual environment. If you haven't already **installed Python's venv module**, you can do so by running:
 
-## Collaborate with your team
+```bash
+sudo apt install python3.12-venv   # For Linux (Debian/Ubuntu)
+```
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
 
-## Test and Deploy
+```bash
+pip install virtualenv            # For Windows, assuming pip is installed (guide: https://phoenixnap.com/kb/install-pip-windows)
+```
 
-Use the built-in continuous integration in GitLab.
+```bash
+brew install virtualenv           # For MacOS
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Once installed, you can **create a virtual environment** by executing the following commands:
 
-***
+```bash
+python3.12 -m venv venv            # Linux (Ubuntu) and MacOS
+```
+```bash
+virtualenv --python C:\Path\To\Python\python.exe venv            # Windows
+```
 
-# Editing this README
+### Activating a Virtual Environmentv
+```bash
+source venv/bin/activate          # Activate the virtual environment (Linux/Macos)
+```
+```bash
+venv\Scripts\activate             # Activate the virtual environment (Windows)
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## Installing Dependencies
 
-## Suggestions for a good README
+After activating the virtual environment, you can install the project dependencies using pip. `mj_sim` uses [poetry](https://python-poetry.org/docs/) for managing dependencies and can thus be installed using
+```bash
+pip install poetry
+```
+Once poetry is installed in your virtual environment, install the project dependencies using 
+```bash
+poetry install
+```
+in the root of the project. Poetry will then install the project's base dependencies.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+> [!WARNING]
+> In case your poetry installation seems to run forever, kill the process and run the following 
+> ```bash
+> export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+> ```
+> and try again.
 
-## Name
-Choose a self-explaining name for your project.
+Some modules requires more dependencies which can be installed in the following manner
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+ - **Learning** 
+    ```bash
+    poetry install --with learning
+    ```
+ - **Real**
+    ```bash
+    poetry install --with real
+    ```
+ - **All**
+    ```bash
+    poetry install --all-extras
+    ```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# Real Time
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Real time simulations can be found in [`sims/`](/sims/) and is run in the following manner as an example
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+python -m sims.opspace_ur5e  # Linux
+mjpython -m sims.opspace_ur5e # MacOS
+Python -m sims.opspace_ur5e   # Windows
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+A demo of this can be seen below
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+![here](/public/docs/real_time_sim_demo.gif)
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# Learning
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+The learning uses JAX, Brax and MuJoCo for performing Deep Reinforcement Learning. See more [here](/learning/).
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+# Docs
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+A static website is generatd using [`pdoc`](https://pdoc.dev/) and can be found in `public/`. Access the documentation through 
+```bash
+<your-webbrowser-of-choise> public/index.html # e.g. firefox public/index.html
+```
+or online through the link found [here](https://sdurobotics.pages.sdu.dk/teaching/mj_sim/).
 
-## License
-For open source projects, say how it is licensed.
+In case of generating pdoc documentation fails, remember to enable pdoc subprocess execution i.e.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```bash
+export PDOC_ALLOW_EXEC=1
+```
+
+# VSCODE Compatibility
+
+In case you are using [vscode](https://code.visualstudio.com/download) native type hinting is not a default for the MuJoCo or `ur_rtde` bindings (at the writing of this README.md). To add type hinting look here [here](https://github.com/google-deepmind/mujoco/issues/1292) (`pybind11-stubgen` is installed with the [`pyproject.toml`](pyproject.toml) when you install the dependencies through poetry) i.e. 
+For MuJoCo:
+```bash
+pybind11-stubgen mujoco -o ./typings/
+```
+For `ur_thde`:
+```bash
+pybind11-stubgen rtde_control -o ./typings/
+```
+```bash
+pybind11-stubgen rtde_receive -o ./typings/
+```
+```bash
+pybind11-stubgen rtde_io -o ./typings/
+```
+For more documentation see [here](https://github.com/sizmailov/pybind11-stubgen).
+
+# License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+# Cite this work
+To cite this work using `bibtex` please use the following
+```bibtex
+@misc{staven2024mjsim,
+  author       = {Staven, Victor M},
+  title        = {mj\_sim},
+  version      = {3.0.0},
+  year         = {2024},
+  howpublished = {\url{https://gitlab.sdu.dk/sdurobotics/teaching/mj_sim}},
+  note         = {A repository to demonstrate, implement, test and learn control in MuJoCo.},
+}
+```

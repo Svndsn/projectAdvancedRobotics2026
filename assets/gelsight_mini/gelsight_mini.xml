@@ -1,0 +1,24 @@
+<mujoco model="gelsight_mini">
+
+	<compiler angle="radian" meshdir="assets" autolimits="true" />
+	<option cone="elliptic" impratio="10" />
+
+
+	<asset>
+		<mesh name="gelsight_mini" file="gsmini_shell.stl" scale="0.001 0.001 0.001" />
+		<mesh name="gelsight_mini_ch" file="gsmini_shell_ch.stl" scale="0.001 0.001 0.001" />
+		<mesh name="untitled" file="untitled.stl" scale="0.001 0.001 0.001" />
+		<mesh name="test" file="test.stl" scale="0.001 0.001 0.001" />
+		<mesh name="test2" file="test2.stl" scale="0.001 0.001 0.001" />
+		<material name="gray" rgba="0.4627 0.4627 0.4627 1"/>
+	</asset>
+
+	<worldbody>
+		<body name="gelsight_mini" euler="1.57 0 0">
+			<geom name="gelsight_mini" type="mesh" mesh="test2" condim="6" material="gray" solref="0.00001 1" />
+			<camera name="gelsight_mini" mode="fixed" euler="1.57 0 0" pos="0 0.005 0" resolution="320 240" />
+			<!-- <camera name="gelsight_mini" mode="fixed" euler="1.57 0 0" pos="0 0 0" resolution="320 240" /> -->
+			 <site name="gelsight_mini_attachment_site"/>
+		</body>
+	</worldbody>
+</mujoco>

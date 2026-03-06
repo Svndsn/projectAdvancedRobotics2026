@@ -1,0 +1,8 @@
+mujoco
+mujoco-mjx
+brax
+jax
+# jax["cuda12"]
+matplotlib
+IPython
+mediapy

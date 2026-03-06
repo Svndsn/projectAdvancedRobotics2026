@@ -1,0 +1,5 @@
+<mujocoinclude>
+    <keyframe>
+        <key name="test_state" time="0.0" qpos="0.  0.  0.  0.  0.  0.  1.  1.  0.1 1.  0.  0.  0. " qvel="0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0. 0." ctrl="0. 0. 0. 0. 0. 0." mpos="2. 2. 2." mquat="1. 0. 0. 0." />
+    </keyframe>
+</mujocoinclude>
