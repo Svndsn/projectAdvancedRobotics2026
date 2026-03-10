@@ -140,12 +140,12 @@
 	</worldbody>
 
 	<actuator>
-		<general class="size3" name="shoulder_pan" joint="shoulder_pan_joint"/>
-		<general class="size3" name="shoulder_lift" joint="shoulder_lift_joint"/>
-		<general class="size3_limited" name="elbow" joint="elbow_joint"/>
-		<general class="size1" name="wrist_1" joint="wrist_1_joint"/>
-		<general class="size1" name="wrist_2" joint="wrist_2_joint"/>
-		<general class="size1" name="wrist_3" joint="wrist_3_joint"/>
+		<general class="size3" name="shoulder_pan" joint="shoulder_pan"/>
+		<general class="size3" name="shoulder_lift" joint="shoulder_lift"/>
+		<general class="size3_limited" name="elbow" joint="elbow"/>
+		<general class="size1" name="wrist_1" joint="wrist_1"/>
+		<general class="size1" name="wrist_2" joint="wrist_2"/>
+		<general class="size1" name="wrist_3" joint="wrist_3"/>
 	</actuator>
 
 	<sensor>
@@ -230,13 +230,12 @@
 
 
 	<contact>
-		<exclude body1="flange" body2="flange_tool" />
 		<exclude body1="wrist_3_link" body2="flange_tool" />
 		<exclude body1="wrist_2_link" body2="flange_tool" />
 	</contact>
 
 	<equality>
-		<weld name="attach" site1="tcp" site2="flange_tool" active="false" solref="0.00001 2" />
+		<weld name="attach" body1="wrist_3_link" body2="flange_tool" active="false" solref="0.00001 2" />
 	</equality>
 
 	<include file="../tests/test_states.xml" />

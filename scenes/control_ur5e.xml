@@ -5,9 +5,9 @@
 		cone="elliptic" />
 
 	<include file="../assets/universal_robots_ur5e/ur5e.xml" />
-	<include file="../assets/universal_robots_ur5e/mounting_plate.xml" />
-	<include file="../assets/universal_robots_ur5e/flexcell_top.xml" />
-	<include file="../assets/universal_robots_ur5e/flange_tool.xml" />
+	<include file="../assets/props/mounting_plate.xml" />
+	<include file="../assets/props/flexcell_top.xml" />
+	<include file="../assets/props/flange_tool.xml" />
 
 
 	<statistic center="0.3 0 0.3" extent="0.8" meansize="0.08" />
@@ -51,13 +51,12 @@
 
 
 	<contact>
-		<exclude body1="flange" body2="flange_tool" />
 		<exclude body1="wrist_3_link" body2="flange_tool" />
 		<exclude body1="wrist_2_link" body2="flange_tool" />
 	</contact>
 
 	<equality>
-		<weld name="attach" site1="tcp" site2="flange_tool" active="false" solref="0.00001 2" />
+		<weld name="attach" body1="wrist_3_link" body2="flange_tool" active="false" solref="0.00001 2" />
 	</equality>
 
 </mujoco>
