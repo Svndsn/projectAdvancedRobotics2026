@@ -1,51 +1,20 @@
-[tool.poetry]
-name = "mj_sim"
-version = "1.1.0"
-description = "A repository to demonstrate, implement, test and learn control in MuJoCo."
-authors = ["Victor Melbye Staven <victorstaven@protonmail.com>"]
-license = "MIT"
-package-mode = false
-
-[tool.poetry.dependencies]
-python = ">=3.10,<4.0"
-mujoco = "^3.2.0"
-numpy = ">=1.26.0,<1.27.0"  # Restrict to compatible version
-numpy_quaternion = "==2023.0.3"
-pytest = "==8.3.2"
-pdoc = "==14.6.1"
-open3d-python = "==0.3.0.0"
-open3d = "==0.19.0"
-opencv-python = ">=4.9.0.80,<4.10.0.84"  # Use compatible version
-spatialmath-python = "==1.1.9"
-glfw = "==2.7.0"
-pandas= "==2.2.2"
-pybind11-stubgen = ">=2.5.1"
-lark = "==1.2.2"
-dm_control = "==1.0.26"
-
-[tool.poetry.group.learning]
-optional = true
-
-[tool.poetry.group.learning.dependencies]
-tyro = ">=0.9.2"
-# wandb = ">=0.19.0"
-wandb = { version = ">=0.16.6", extras = ["media"] }
-# wandb[media] = ">=0.19.0"
-mujoco-mjx = ">=3.2.6"
-brax = ">=0.11.0"
-# jax = "==0.11.0"
-jax = { version = ">=0.4.35", extras = ["cuda12"] }
-# jax[cuda12] = ">=0.11.0"
-mediapy = ">=1.2.2"
-jaxlie = "==1.4.2"
-
-
-[tool.poetry.group.real]
-optional = true
-
-[tool.poetry.group.real.dependencies]
-ur_rtde = "==1.5.9"
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[project]
+name = "projectadvancedrobotics2026"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dm-control==1.0.23",
+    "glfw==2.7.0",
+    "mujoco>=3.5.0",
+    "numpy>=1.26.0,<2",
+    "numpy-quaternion==2023.0.3",
+    "open3d>=0.19.0",
+    "opencv-python==4.9.0.80",
+    "pdoc==14.7.0",
+    "pytest==8.3.3",
+    "spatialmath-python==1.1.9",
+    "tensorboard==2.14.0",
+    "torch==2.3.0",
+]
