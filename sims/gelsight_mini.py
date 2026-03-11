@@ -55,7 +55,7 @@ class MjSim(BaseSim):
     def keyboard_callback(self, key: int):
         if key is glfw.KEY_SPACE:
             self.gs.save("demo.png")
-            print("You pressed space...")
+            print(f"pressed={self.gs.is_pressed}  contact_area={self.gs.contact_area:.4f}")
 
 
 if __name__ == "__main__":

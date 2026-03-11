@@ -3,6 +3,7 @@ numpy>=1.26.0,<2
 numpy_quaternion==2023.0.3
 open3d>=0.19.0
 opencv_python==4.9.0.80
+pandas>=2.2.3
 spatialmath_python==1.1.9
 glfw==2.7.0
 pytest==8.3.3

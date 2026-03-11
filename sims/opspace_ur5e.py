@@ -118,6 +118,12 @@ class MjSim(BaseSim):
         m = mj.MjModel.from_xml_string(scene.to_xml_string(), scene.get_assets())
         d = mj.MjData(m)
 
+        # spwan the gelsight_mini
+        gs_mini = mjcf.from_path(_HERE / "assets/gelsight_mini/gelsight_mini.xml")
+        scene.attach(gs_mini)
+        m = mj.MjModel.from_xml_string(scene.to_xml_string(), scene.get_assets())
+        d = mj.MjData(m)
+    
         # step once to compute the poses of objects
         mj.mj_step(m, d)
 
