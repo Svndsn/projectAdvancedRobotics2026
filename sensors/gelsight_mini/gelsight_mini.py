@@ -120,6 +120,23 @@ class GelSightMini(Camera):
         return self.cam.name
 
     @property
+    def is_pressed(self) -> bool:
+        """
+        Returns True if any part of the elastomer surface is currently in contact.
+        """
+        _, in_touch = self._segments(self.depth_image)
+        return bool(np.any(in_touch > 0))
+
+    @property
+    def contact_area(self) -> float:
+        """
+        Returns the fraction of elastomer pixels that are currently in contact (0.0–1.0).
+        A value of 0.0 means no contact; higher values indicate a larger or deeper press.
+        """
+        _, in_touch = self._segments(self.depth_image)
+        return float(np.mean(in_touch))
+
+    @property
     def tactile_image(self) -> np.ndarray:
         """
         Property method to get the GelSight image data.

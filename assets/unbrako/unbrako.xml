@@ -1,0 +1,17 @@
+<mujoco model="unbrako">
+
+    <compiler angle="radian" meshdir="assets" autolimits="true" />
+    <option cone="elliptic" impratio="10" />
+    <asset>
+        <mesh name="unbrako" file="unbrako.stl" scale="0.001 0.001 0.001" />
+        <material name="gray" rgba="0.4627 0.4627 0.4627 1"/>
+    </asset>
+
+    <worldbody>
+        <body name="unbrako" euler="1.57 0 0">
+            <geom name="unbrako" type="mesh" mesh="unbrako" condim="6" material="gray" solref="0.00001 1" />
+            <camera name="unbrako" mode="fixed" euler="1.57 0 0" pos="0 0.005 0" resolution="320 240" />
+             <site name="unbrako_attachment_site"/>
+        </body>
+    </worldbody>
+</mujoco>
