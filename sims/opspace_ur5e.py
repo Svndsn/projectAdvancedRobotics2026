@@ -13,9 +13,10 @@ from dm_control import mjcf
 
 from ctrl.opspace.opspace import OpSpace
 from robots.ur_robot import URRobot
+from sensors.gelsight_mini.gelsight_mini import GelSightMini
 from sims import BaseSim
-from sims.base_sim import SimSync
-from utils.mj import ObjType, get_names
+from sims.base_sim import SimSync, sleep
+from utils.mj import ObjType, get_names, get_pose
 
 
 class MjSim(BaseSim):
@@ -32,8 +33,25 @@ class MjSim(BaseSim):
 
         # give the robot the opspace controller
         self.ur5e.controller = OpSpace(self.ur5e)
+        self.gs = GelSightMini(self._model, self._data)
+        self._hover_height = 0.12
+        self._min_press_height = 0.01
+        self._prepress_height = 0.04
+        self._press_force_threshold = 0.03
+        self._bottom_hold_time = 0.15
+        self._top_hold_time = 0.35
+        self._step_settle_time = 0.02
+        self._approach_velocity = 0.08
+        self._press_velocity = 0.025
+        self._retract_velocity = 0.1
+        self._home_velocity = 0.12
+        self._stream_force_threshold = 0.02
+        self._stream_period = 0.2
+        self._stream_force_delta = 0.5
+        self._last_stream_time = -np.inf
+        self._last_stream_force = 0.0
 
-        self.tasks = [self.move]
+        self.tasks = [self.move, self.stream_gelsight_force]
 
     def init(self) -> Tuple[mj.MjModel, mj.MjData]:
         # root
@@ -121,6 +139,22 @@ class MjSim(BaseSim):
         # spwan the gelsight_mini
         gs_mini = mjcf.from_path(_HERE / "assets/gelsight_mini/gelsight_mini.xml")
         scene.attach(gs_mini)
+        press_sensor = scene.sensor.add(
+            "plugin",
+            name="gelsight_touch",
+            plugin="mujoco.sensor.touch_grid",
+            objtype="site",
+            objname=f"{gs_mini.model}/gelsight_mini_press_site",
+        )
+        scene.sensor.add(
+            "force",
+            name="gelsight_force",
+            site=f"{gs_mini.model}/gelsight_mini_press_site",
+        )
+        press_sensor.add("config", key="size", value="8 6")
+        press_sensor.add("config", key="fov", value="18 14")
+        press_sensor.add("config", key="gamma", value="0")
+        press_sensor.add("config", key="nchannel", value="1")
         m = mj.MjModel.from_xml_string(scene.to_xml_string(), scene.get_assets())
         d = mj.MjData(m)
     
@@ -133,15 +167,128 @@ class MjSim(BaseSim):
         for i, jn in enumerate(ur_joint_names):
             d.joint(jn).qpos = j0[i]
 
+        # Place GelSight on the table directly below the tool-tip site.
+        mj.mj_forward(m, d)
+        tip_site_name = next(
+            sn for sn in get_names(m, ObjType.SITE) if sn and sn.endswith("flange_tool")
+        )
+        table_geom_name = next(
+            gn for gn in get_names(m, ObjType.GEOM) if gn and "flexcell_top" in gn
+        )
+        gelsight_body_name = next(
+            bn
+            for bn in get_names(m, ObjType.BODY)
+            if bn and bn.endswith("/gelsight_mini")
+        )
+
+        tip_xy = d.site(tip_site_name).xpos[:2]
+        table_top_z = d.geom(table_geom_name).xpos[2] + m.geom(table_geom_name).size[2]
+        m.body(gelsight_body_name).pos[:] = np.array(
+            [tip_xy[0], tip_xy[1], table_top_z + 1e-3]
+        )
+        mj.mj_forward(m, d)
+
         return m, d
 
     def move(self, ss: SimSync):
+        mj.mj_forward(self.model, self.data)
         T0 = self.ur5e.get_ee_pose()
-        self.ur5e.move_l(sm.SE3.Tz(-0.30) @ T0, ss)
-        T0 = self.ur5e.get_ee_pose()
+        home_pose = sm.SE3.Rt(T0.R, T0.t)
+        T_world_base = get_pose(self.model, self.data, f"{self.ur5e.name}/base", ObjType.BODY)
+        tip_site_name = next(
+            sn for sn in get_names(self.model, ObjType.SITE) if sn and sn.endswith("flange_tool")
+        )
+        press_site_name = next(
+            sn
+            for sn in get_names(self.model, ObjType.SITE)
+            if sn and sn.endswith("gelsight_mini_press_site")
+        )
+        tip_site_pos = (T_world_base.inv() @ get_pose(self.model, self.data, tip_site_name, ObjType.SITE)).t
+        press_site_pos = (T_world_base.inv() @ get_pose(self.model, self.data, press_site_name, ObjType.SITE)).t
+        tool_tip_offset = tip_site_pos - T0.t
+
+        hover_pose = sm.SE3.Rt(
+            T0.R,
+            press_site_pos + np.array([0.0, 0.0, self._hover_height]) - tool_tip_offset,
+        )
+        coarse_heights = np.linspace(
+            self._hover_height,
+            self._prepress_height,
+            num=8,
+        )[1:]
+        fine_heights = np.linspace(
+            self._prepress_height,
+            self._min_press_height,
+            num=14,
+        )[1:]
+
+        self.ur5e.move_l(hover_pose, ss, velocity=self._approach_velocity)
+        sleep(self._top_hold_time, ss, self.model)
+
+        contact_detected = False
+        for height in coarse_heights:
+            approach_pose = sm.SE3.Rt(
+                T0.R,
+                press_site_pos + np.array([0.0, 0.0, height]) - tool_tip_offset,
+            )
+            self.ur5e.move_l(approach_pose, ss, velocity=self._approach_velocity)
+            sleep(self._step_settle_time, ss, self.model)
+            if self.gs.normal_force >= self._press_force_threshold:
+                contact_detected = True
+                break
+
+        if not contact_detected:
+            for height in fine_heights:
+                approach_pose = sm.SE3.Rt(
+                    T0.R,
+                    press_site_pos + np.array([0.0, 0.0, height]) - tool_tip_offset,
+                )
+                self.ur5e.move_l(approach_pose, ss, velocity=self._press_velocity)
+                sleep(self._step_settle_time, ss, self.model)
+                if self.gs.normal_force >= self._press_force_threshold:
+                    contact_detected = True
+                    break
+
+        if contact_detected:
+            print(f"GelSight contact reached at force {self.gs.normal_force:.4f} N")
+            sleep(self._bottom_hold_time, ss, self.model)
+        else:
+            print(
+                f"GelSight contact not reached; max force {self.gs.normal_force:.4f} N. Returning home."
+            )
+
+        self.ur5e.move_l(hover_pose, ss, velocity=self._retract_velocity)
+        sleep(self._step_settle_time, ss, self.model)
+        self.ur5e.move_l(home_pose, ss, velocity=self._home_velocity)
+        sleep(self._top_hold_time, ss, self.model)
+
+    def record_gelsight_press(self) -> dict:
+        return self.gs.record_press_measurement()
+
+    def stream_gelsight_force(self, ss: SimSync):
         while True:
-            self.ur5e.move_l(sm.SE3.Tz(0.1) @ T0, ss)
-            self.ur5e.move_l(sm.SE3.Tz(-0.1) @ T0, ss)
+            press = self.record_gelsight_press()
+            should_stream = (
+                press["normal_force"] >= self._stream_force_threshold
+                and self.data.time - self._last_stream_time >= self._stream_period
+                and abs(press["normal_force"] - self._last_stream_force)
+                >= self._stream_force_delta
+            )
+            if should_stream:
+                self._last_stream_time = self.data.time
+                self._last_stream_force = press["normal_force"]
+                print(
+                    "GelSight stream: ",
+                    {
+                        "time": round(press["time"], 4),
+                        "normal_force": round(press["normal_force"], 4),
+                        "total_press": round(press["total_press"], 4),
+                        "active_taxels": press["active_taxels"],
+                    },
+                )
+            elif press["normal_force"] < self._stream_force_threshold:
+                self._last_stream_force = 0.0
+            ss.step()
 
     def log(self, ss: SimSync):
         while True:
@@ -170,6 +317,19 @@ class MjSim(BaseSim):
 
         if key is glfw.KEY_PERIOD:
             print("UR5e force/torque measurement: ", self.ur5e.w)
+
+        if key is glfw.KEY_G:
+            press = self.record_gelsight_press()
+            print(
+                "GelSight press measurement: ",
+                {
+                    "time": round(press["time"], 4),
+                    "total_press": round(press["total_press"], 4),
+                    "normal_force": round(press["normal_force"], 4),
+                    "peak_press": round(press["peak_press"], 4),
+                    "active_taxels": press["active_taxels"],
+                },
+            )
 
 
 _logger = logging.getLogger("mj_sim")
