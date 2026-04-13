@@ -160,33 +160,12 @@ class MjSim(BaseSim):
     
         # step once to compute the poses of objects
         mj.mj_step(m, d)
-
+        
         # get the init pose of the ur5e
         ur_joint_names = [jn for jn in get_names(m, ObjType.JOINT) if "ur5e" in jn]
         j0 = [2.8, -1.5708, 1.5708, -1.5708, -1.5708, 0]
         for i, jn in enumerate(ur_joint_names):
             d.joint(jn).qpos = j0[i]
-
-        # Place GelSight on the table directly below the tool-tip site.
-        mj.mj_forward(m, d)
-        tip_site_name = next(
-            sn for sn in get_names(m, ObjType.SITE) if sn and sn.endswith("flange_tool")
-        )
-        table_geom_name = next(
-            gn for gn in get_names(m, ObjType.GEOM) if gn and "flexcell_top" in gn
-        )
-        gelsight_body_name = next(
-            bn
-            for bn in get_names(m, ObjType.BODY)
-            if bn and bn.endswith("/gelsight_mini")
-        )
-
-        tip_xy = d.site(tip_site_name).xpos[:2]
-        table_top_z = d.geom(table_geom_name).xpos[2] + m.geom(table_geom_name).size[2]
-        m.body(gelsight_body_name).pos[:] = np.array(
-            [tip_xy[0], tip_xy[1], table_top_z + 1e-3]
-        )
-        mj.mj_forward(m, d)
 
         return m, d
 
