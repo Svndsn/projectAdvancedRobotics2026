@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 import cv2
 import mujoco as mj
@@ -20,6 +20,8 @@ class GelSightMini(Camera):
         model: mj.MjModel,
         data: mj.MjData,
         cam_name: str = "gelsight_mini/gelsight_mini",
+        press_sensor_name: str = "gelsight_touch",
+        force_sensor_name: str = "gelsight_force",
     ) -> None:
         """
         Constructor method for GelSightMini class.
@@ -38,6 +40,8 @@ class GelSightMini(Camera):
         self._cam_name = cam_name
         self._model = model
         self._data = data
+        self._press_sensor_name = press_sensor_name
+        self._force_sensor_name = force_sensor_name
         self._width = 320  # px
         self._height = 240  # px
         self.cam = Camera(
@@ -50,6 +54,14 @@ class GelSightMini(Camera):
         self._cam_id = self.cam.id
         self._save_dir = self.cam._save_dir
         self._renderer = self.cam._renderer
+        self._press_sensor_id = mj.mj_name2id(
+            self._model, mj.mjtObj.mjOBJ_SENSOR, self._press_sensor_name
+        )
+        self._force_sensor_id = mj.mj_name2id(
+            self._model, mj.mjtObj.mjOBJ_SENSOR, self._force_sensor_name
+        )
+        self._press_history: List[Dict[str, Union[float, int, np.ndarray]]] = []
+        self._force_bias = np.zeros(3, dtype=np.float64)
 
         self._background_img = cv2.imread(
             "sensors/gelsight_mini/assets/background_gelsight2017.jpg"
@@ -108,6 +120,8 @@ class GelSightMini(Camera):
             },  # green, left
         ]
 
+        self.tare_press_sensor()
+
     @property
     def name(self) -> str:
         """
@@ -120,12 +134,96 @@ class GelSightMini(Camera):
         return self.cam.name
 
     @property
+    def has_press_sensor(self) -> bool:
+        return self._press_sensor_id != -1
+
+    @property
+    def has_force_sensor(self) -> bool:
+        return self._force_sensor_id != -1
+
+    @property
+    def press_force_vector(self) -> np.ndarray:
+        if self.has_force_sensor:
+            return (
+                np.array(self._data.sensor(self._force_sensor_name).data, copy=True)
+                - self._force_bias
+            )
+        return np.zeros(3, dtype=np.float64)
+
+    @property
+    def normal_force(self) -> float:
+        if self.has_force_sensor:
+            return float(np.linalg.norm(self.press_force_vector))
+        return 0.0
+
+    @property
+    def press_taxels(self) -> np.ndarray:
+        if self.has_press_sensor:
+            return np.array(self._data.sensor(self._press_sensor_name).data, copy=True)
+
+        _, in_touch = self._segments(self.depth_image)
+        return np.array([float(np.mean(in_touch))], dtype=np.float64)
+
+    @property
+    def press_intensity(self) -> float:
+        if self.has_force_sensor:
+            return self.normal_force
+        return float(np.sum(self.press_taxels))
+
+    @property
+    def peak_press(self) -> float:
+        if self.has_force_sensor:
+            return self.normal_force
+        return float(np.max(self.press_taxels))
+
+    @property
+    def mean_press(self) -> float:
+        if self.has_force_sensor:
+            return self.normal_force
+        return float(np.mean(self.press_taxels))
+
+    @property
+    def active_taxels(self) -> int:
+        if self.has_force_sensor and self.normal_force > 1e-6:
+            return 1
+        return int(np.count_nonzero(self.press_taxels > 0))
+
+    @property
+    def press_history(self) -> List[Dict[str, Union[float, int, np.ndarray]]]:
+        return list(self._press_history)
+
+    def clear_press_history(self) -> None:
+        self._press_history.clear()
+
+    def tare_press_sensor(self) -> None:
+        if self.has_force_sensor:
+            self._force_bias = np.array(
+                self._data.sensor(self._force_sensor_name).data,
+                copy=True,
+            )
+
+    def record_press_measurement(self) -> Dict[str, Union[float, int, np.ndarray]]:
+        taxels = self.press_taxels
+        force_vector = self.press_force_vector
+        measurement: Dict[str, Union[float, int, np.ndarray]] = {
+            "time": float(self._data.time),
+            "total_press": self.press_intensity,
+            "peak_press": self.peak_press,
+            "mean_press": self.mean_press,
+            "active_taxels": self.active_taxels,
+            "force_vector": force_vector,
+            "normal_force": self.normal_force,
+            "taxels": taxels,
+        }
+        self._press_history.append(measurement)
+        return measurement
+
+    @property
     def is_pressed(self) -> bool:
         """
         Returns True if any part of the elastomer surface is currently in contact.
         """
-        _, in_touch = self._segments(self.depth_image)
-        return bool(np.any(in_touch > 0))
+        return self.press_intensity > 1e-6
 
     @property
     def contact_area(self) -> float:
@@ -133,6 +231,14 @@ class GelSightMini(Camera):
         Returns the fraction of elastomer pixels that are currently in contact (0.0–1.0).
         A value of 0.0 means no contact; higher values indicate a larger or deeper press.
         """
+        if self.has_press_sensor:
+            active = float(np.mean(self.press_taxels > 0))
+            if active > 0:
+                return active
+
+        if self.has_force_sensor and self.normal_force > 1e-6:
+            return 1.0
+
         _, in_touch = self._segments(self.depth_image)
         return float(np.mean(in_touch))
 
