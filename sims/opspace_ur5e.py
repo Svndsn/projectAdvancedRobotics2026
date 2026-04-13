@@ -126,12 +126,21 @@ class MjSim(BaseSim):
     
         # step once to compute the poses of objects
         mj.mj_step(m, d)
-
+        
         # get the init pose of the ur5e
         ur_joint_names = [jn for jn in get_names(m, ObjType.JOINT) if "ur5e" in jn]
         j0 = [2.8, -1.5708, 1.5708, -1.5708, -1.5708, 0]
         for i, jn in enumerate(ur_joint_names):
             d.joint(jn).qpos = j0[i]
+
+        # place GelSight mini on table directly under the tool tip
+        mj.mj_forward(m, d)
+        tip_sid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_SITE, "flange_tool")
+        tip_xy = d.site_xpos[tip_sid][:2].copy()
+
+        gs_bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, "gelsight_mini")
+        m.body_pos[gs_bid] = np.array([tip_xy[0], tip_xy[1], 0.051])
+        mj.mj_forward(m, d)
 
         return m, d
 
