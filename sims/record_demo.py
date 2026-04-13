@@ -17,6 +17,12 @@ from robots.ur_robot import URRobot
 from utils.mj import ObjType, get_names, get_pose, name2id
 
 
+def _rotvec_from_pose(T: sm.SE3) -> list[float]:
+    theta, v = smb.tr2angvec(T.R)
+    rotvec = theta * v
+    return [rotvec[0], rotvec[1], rotvec[2]]
+
+
 def _default_out_path() -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path("data/demo") / f"sim_{stamp}.csv"
@@ -213,6 +219,7 @@ def main() -> None:
     data.mocap_quat[target_mocap_id] = smb.r2q(T_world_tcp.R)
     T_base_tcp = ur5e.get_ee_pose()
     target_rotation = T_base_tcp.R.copy()
+    target_position = T_base_tcp.t.copy()
     ur5e.controller.T_target = T_base_tcp
 
     with mujoco.viewer.launch_passive(
@@ -242,9 +249,13 @@ def main() -> None:
                 get_pose(model, data, f"{ur5e.name}/base", ObjType.BODY).inv()
                 @ T_world_target
             )
+            target_position = (
+                (1.0 - args.teach_alpha) * target_position
+                + args.teach_alpha * T_base_target.t
+            )
             target_A = np.eye(4)
             target_A[:3, :3] = target_rotation
-            target_A[:3, 3] = T_base_target.t
+            target_A[:3, 3] = target_position
             ur5e.controller.T_target = sm.SE3(target_A, check=False)
 
             # Apply task-space hold torques every step.
@@ -254,15 +265,11 @@ def main() -> None:
 
             if is_recording and data.time - last_sample_time >= 1.0 / args.rate:
                 T_base_tcp: sm.SE3 = ur5e.get_ee_pose()
-                theta, v = smb.tr2angvec(T_base_tcp.R)
-                rotvec = theta * v
                 row = [
                     T_base_tcp.t[0],
                     T_base_tcp.t[1],
                     T_base_tcp.t[2],
-                    rotvec[0],
-                    rotvec[1],
-                    rotvec[2],
+                    *_rotvec_from_pose(T_base_tcp),
                 ]
                 rows.append(row)
                 last_sample_time = data.time

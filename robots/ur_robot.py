@@ -452,7 +452,7 @@ class URRobot(BaseRobot):
                 + " s"
             )
 
-        trajectory_samples = int(duration * int(1 / self.dt))
+        trajectory_samples = max(2, int(np.ceil(duration / self.dt)))
         t_array = np.linspace(0.0, duration, num=trajectory_samples)
 
         c_traj = ctraj(T0, T1, t_array)
