@@ -211,7 +211,9 @@ def main() -> None:
     T_world_tcp = get_pose(model, data, ur5e.tcp_id, ObjType.SITE)
     data.mocap_pos[target_mocap_id] = T_world_tcp.t
     data.mocap_quat[target_mocap_id] = smb.r2q(T_world_tcp.R)
-    ur5e.controller.T_target = ur5e.get_ee_pose()
+    T_base_tcp = ur5e.get_ee_pose()
+    target_rotation = T_base_tcp.R.copy()
+    ur5e.controller.T_target = T_base_tcp
 
     with mujoco.viewer.launch_passive(
         model=model,
@@ -227,15 +229,23 @@ def main() -> None:
             "SPACE: toggle record | ENTER: save & exit | ESC: exit without saving"
         )
         print(
-            "Drag the orange target sphere with the mouse and the arm will follow it."
+            "Double-click the orange sphere to select it."
+        )
+        print(
+            "Ctrl + right-drag moves it in the view plane. "
+            "Ctrl + Shift + right-drag moves it in the horizontal plane."
         )
         while viewer.is_running():
             step_start = time.time()
             T_world_target = get_pose(model, data, "drag_target", ObjType.BODY)
-            ur5e.controller.T_target = (
+            T_base_target = (
                 get_pose(model, data, f"{ur5e.name}/base", ObjType.BODY).inv()
                 @ T_world_target
             )
+            target_A = np.eye(4)
+            target_A[:3, :3] = target_rotation
+            target_A[:3, 3] = T_base_target.t
+            ur5e.controller.T_target = sm.SE3(target_A, check=False)
 
             # Apply task-space hold torques every step.
             tau = ur5e.controller.step()
