@@ -146,6 +146,9 @@ def main() -> None:
         if key == glfw.KEY_ESCAPE:
             should_exit = True
 
+    # Hold current pose so the arm doesn't sag under gravity.
+    ur5e.controller.T_target = ur5e.get_ee_pose()
+
     with mujoco.viewer.launch_passive(
         model=model,
         data=data,
@@ -159,6 +162,9 @@ def main() -> None:
         print("SPACE: toggle record | ENTER: save & exit | ESC: exit without saving")
         while viewer.is_running():
             step_start = time.time()
+            # Apply task-space hold torques every step.
+            tau = ur5e.controller.step()
+            ur5e.set_ctrl(tau)
             mj.mj_step(model, data)
 
             if is_recording and data.time - last_sample_time >= 1.0 / args.rate:
