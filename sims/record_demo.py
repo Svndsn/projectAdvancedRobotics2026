@@ -254,7 +254,7 @@ def main() -> None:
 
             if is_recording and data.time - last_sample_time >= 1.0 / args.rate:
                 T_base_tcp: sm.SE3 = ur5e.get_ee_pose()
-                theta, v = smb.r2angvec(T_base_tcp.R)
+                theta, v = smb.tr2angvec(T_base_tcp.R)
                 rotvec = theta * v
                 row = [
                     T_base_tcp.t[0],
