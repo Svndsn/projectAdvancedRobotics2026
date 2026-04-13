@@ -38,7 +38,7 @@ class MjSim(BaseSim):
         self.ur5e.controller = OpSpace(self.ur5e)
 
         # load in demonstration
-        df = pd.read_csv("public/docs/demonstration.csv")
+        df = pd.read_csv("data/demo/demonstration.csv")
         self.dmp = DMPCartesian()
         self.pose_matrices = self.df_2_se3(df, "actual_TCP_pose")
 
