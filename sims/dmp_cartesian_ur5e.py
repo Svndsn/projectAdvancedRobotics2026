@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import List, Tuple
@@ -15,15 +16,34 @@ from dm_control import mjcf
 from ctrl.dmp_cartesian.dmp_cartesian import DMPCartesian
 from ctrl.opspace.opspace import OpSpace
 from robots.ur_robot import URRobot
+from scripts.plot_dmp_demo import generate_plots
 from sims import BaseSim
-from sims.base_sim import SimSync
+from sims.base_sim import SimSync, sleep
 from utils.math import npq2np
 from utils.mj import ObjType, get_names
 from utils.sm import make_tf
 
 
+def _rotvec_from_pose(T: sm.SE3) -> list[float]:
+    theta, v = T.angvec()
+    rotvec = theta * v
+    return [rotvec[0], rotvec[1], rotvec[2]]
+
+
+def _default_replay_log_path(demo_path: str, tau_scale: float) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = Path(demo_path).stem
+    scale_tag = str(tau_scale).replace(".", "p")
+    return Path("data/demo") / f"{stem}_dmp_replay_tau{scale_tag}_{stamp}.csv"
+
+
 class MjSim(BaseSim):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        demo_path: str,
+        replay_log_path: str,
+        tau_scale: float,
+    ) -> None:
         super().__init__()
 
         self._model, self._data = self.init()
@@ -38,15 +58,24 @@ class MjSim(BaseSim):
         self.ur5e.controller = OpSpace(self.ur5e)
 
         # load in demonstration
-        df = pd.read_csv("public/docs/demonstration.csv")
-        self.dmp = DMPCartesian()
+        df = pd.read_csv(demo_path)
+        self.demo_path = Path(demo_path).expanduser().resolve()
+        self.replay_log_path = Path(replay_log_path).expanduser().resolve()
+        self.replay_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.tau_scale = tau_scale
         self.pose_matrices = self.df_2_se3(df, "actual_TCP_pose")
+
+        self.dmp = DMPCartesian()
 
         self.dmp.load(self.pose_matrices)
 
-        p, v, a, q, w, dw = self.dmp.rollout(self.dmp.ts, self.dmp.tau)
+        rollout_tau = self.dmp.tau * self.tau_scale
+        n_steps = max(2, int(round(len(self.dmp.ts) * self.tau_scale)))
+        rollout_ts = np.linspace(0.0, rollout_tau, n_steps)
+        p, v, a, q, w, dw = self.dmp.rollout(rollout_ts, rollout_tau)
 
         self.dmp_poses = [make_tf(p[i], npq2np(q[i])) for i in range(len(p))]
+        self.replay_rows: list[list[float]] = []
 
         self.tasks = [self.spin]
 
@@ -80,9 +109,11 @@ class MjSim(BaseSim):
                 ]
             ].values
             # Convert axis-angle to an SE3 rotation matrix
-            orientation = sm.SO3.AngVec(
-                np.linalg.norm(axis_angle), axis_angle / np.linalg.norm(axis_angle)
-            )
+            angle = np.linalg.norm(axis_angle)
+            if angle > 1e-12:
+                orientation = sm.SO3.AngVec(angle, axis_angle / angle)
+            else:
+                orientation = sm.SO3()
             # Create the SE3 matrix
             se3_matrices.append(sm.SE3.Rt(orientation.R, position))
         return se3_matrices
@@ -189,12 +220,37 @@ class MjSim(BaseSim):
             ss.step()
 
     def spin(self, ss: SimSync):
-        T_new = [sm.SE3.Rz(np.pi) @ T for T in self.dmp_poses]
-        self.ur5e.move_l(T_new[0], ss)
-        self.ur5e.move_traj(T_new[::2], ss)
+        self.ur5e.move_l(self.dmp_poses[0], ss)
+
+        for target_pose in self.dmp_poses:
+            self.ur5e.controller.T_target = target_pose
+            x = self.ur5e.controller.step()
+            self.ur5e.set_ctrl(x)
+            sleep(self.model.opt.timestep, ss, self.model)
+
+            actual_pose = self.ur5e.get_ee_pose()
+            self.replay_rows.append(
+                [
+                    target_pose.t[0],
+                    target_pose.t[1],
+                    target_pose.t[2],
+                    *_rotvec_from_pose(target_pose),
+                    actual_pose.t[0],
+                    actual_pose.t[1],
+                    actual_pose.t[2],
+                    *_rotvec_from_pose(actual_pose),
+                ]
+            )
+
+        pd.DataFrame(
+            self.replay_rows,
+            columns=[f"dmp_target_TCP_pose_{i}" for i in range(6)]
+            + [f"actual_TCP_pose_{i}" for i in range(6)],
+        ).to_csv(self.replay_log_path, index=False)
+        print(f"Saved replay log: {self.replay_log_path}")
 
         # to keep the robot in place after having performed the dmp motion
-        self.ur5e.controller.T_target = T_new[-1]
+        self.ur5e.controller.T_target = self.dmp_poses[-1]
         while True:
             tau = self.ur5e.controller.step()
             self.ur5e.set_ctrl(tau)
@@ -236,6 +292,22 @@ def main():
     parser = argparse.ArgumentParser(
         description="MuJoCo simulation of manipulators and controllers."
     )
+    parser.add_argument(
+        "--demo",
+        default="data/demo/demonstration.csv",
+        help="Path to recorded demonstration CSV.",
+    )
+    parser.add_argument(
+        "--replay-log-out",
+        default="",
+        help="Optional output CSV path for logged DMP target vs executed replay.",
+    )
+    parser.add_argument(
+        "--tau-scale",
+        type=float,
+        default=1.0,
+        help="Temporal scaling for the DMP rollout. Values > 1 slow it down.",
+    )
 
     parser.add_argument(
         "-v",
@@ -248,6 +320,9 @@ def main():
 
     args, _ = parser.parse_known_args()
 
+    if args.tau_scale <= 0:
+        parser.error("--tau-scale must be greater than 0.")
+
     # set the default log level to INFO
     _logger.setLevel(logging.INFO)
     setup_logging(args.loglevel)
@@ -256,8 +331,14 @@ def main():
     for key, value in vars(args).items():
         _logger.info(f"\t{key:30}{value}")
 
-    sim = MjSim()
+    replay_log_path = (
+        args.replay_log_out
+        if args.replay_log_out
+        else str(_default_replay_log_path(args.demo, args.tau_scale))
+    )
+    sim = MjSim(args.demo, replay_log_path, args.tau_scale)
     sim.run()
+    generate_plots(args.demo, replay_log=replay_log_path)
 
 
 if __name__ == "__main__":
