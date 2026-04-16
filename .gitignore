@@ -9,5 +9,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+pca_principal_components.png
+data/
     
     
