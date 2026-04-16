@@ -1,4 +1,8 @@
+import sys
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import glfw
 import mujoco as mj
@@ -35,7 +39,13 @@ class MjSim(BaseSim):
         scene.attach(gs1)
         probe = scene.worldbody.add("body", name="press_probe")
         probe.add("freejoint", name="press_probe_joint")
-        probe.add("geom", name="press_probe", type="sphere", size="0.006", rgba="0.85 0.2 0.2 1")
+        probe.add(
+            "geom",
+            name="press_probe_geom",
+            type="box",
+            size="0.001 0.002 0.001",
+            rgba="0.8 0.1 0.1 1.0",
+        )
         press_sensor = scene.sensor.add(
             "plugin",
             name="gelsight_touch",
