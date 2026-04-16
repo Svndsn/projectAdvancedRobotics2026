@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 
-DEFAULT_IMAGE_PATH = "/home/simon/git/projectAdvancedRobotics2026/data/img/gelsight_mini/gelsight_mini/demo.png_rgb.png"
+DEFAULT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/demo.png_rgb.png"
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,7 +166,7 @@ def main() -> None:
     angle_deg = np.degrees(angle_rad)
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
-    
+
     output_path = Path(args.output)
     if not cv2.imwrite(str(output_path), vis):
         raise IOError(f"Failed to write output image to: {output_path}")
