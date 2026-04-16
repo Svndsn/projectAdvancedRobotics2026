@@ -37,13 +37,31 @@ class MjSim(BaseSim):
         gs1 = mjcf.from_path(_XML_GS_MINI)
 
         scene.attach(gs1)
+        # probe = scene.worldbody.add("body", name="press_probe")
+        # probe.add("freejoint", name="press_probe_joint")
+        # probe.add(
+        #     "geom",
+        #     name="press_probe_geom",
+        #     type="box",
+        #     size="0.002 0.001 0.001",
+        #     rgba="0.8 0.1 0.1 1.0",
+        # )
         probe = scene.worldbody.add("body", name="press_probe")
         probe.add("freejoint", name="press_probe_joint")
+
+        # register the STL as a mesh asset
+        scene.asset.add(
+            "mesh",
+            name="unbrako_mesh",
+            file=str(_HERE / "./assets/unbrako/assets/unbrako.stl"),
+            scale="0.001 0.001 0.001",   # adjust this!
+        )
+
         probe.add(
             "geom",
             name="press_probe_geom",
-            type="box",
-            size="0.002 0.001 0.001",
+            type="mesh",
+            mesh="unbrako_mesh",
             rgba="0.8 0.1 0.1 1.0",
         )
         press_sensor = scene.sensor.add(
