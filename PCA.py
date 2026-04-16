@@ -162,11 +162,11 @@ def main() -> None:
 
     mean, eigenvalues, eigenvectors = compute_pca(points)
     principal_axis = eigenvectors[:, 0]
-    angle_rad = np.arctan2(principal_axis[1], principal_axis[0])
+    angle_rad = np.arctan2(max(principal_axis), min(principal_axis))
     angle_deg = np.degrees(angle_rad)
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
-
+    
     output_path = Path(args.output)
     if not cv2.imwrite(str(output_path), vis):
         raise IOError(f"Failed to write output image to: {output_path}")

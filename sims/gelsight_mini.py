@@ -43,7 +43,7 @@ class MjSim(BaseSim):
             "geom",
             name="press_probe_geom",
             type="box",
-            size="0.001 0.002 0.001",
+            size="0.002 0.001 0.001",
             rgba="0.8 0.1 0.1 1.0",
         )
         press_sensor = scene.sensor.add(
