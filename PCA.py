@@ -162,7 +162,7 @@ def main() -> None:
 
     mean, eigenvalues, eigenvectors = compute_pca(points)
     principal_axis = eigenvectors[:, 0]
-    angle_rad = np.arctan2(max(principal_axis), min(principal_axis))
+    angle_rad = np.arctan2(max(abs(principal_axis)), min(abs(principal_axis)))
     angle_deg = np.degrees(angle_rad)
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
