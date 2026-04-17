@@ -88,7 +88,7 @@ class MjSim(BaseSim):
         mj.mj_step(m, d)
 
         press_site_pos = d.site("gelsight_mini/gelsight_mini_press_site").xpos.copy()
-        d.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, 0.02]), [1.0, 0.0, 0.0, 0.0]]
+        d.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, 0.112]), [1.0, 0.0, 0.0, 0.0]]
         mj.mj_forward(m, d)
 
         return m, d
@@ -96,7 +96,7 @@ class MjSim(BaseSim):
     def set_probe_pressed(self, pressed: bool) -> None:
         press_site_pos = self.data.site("gelsight_mini/gelsight_mini_press_site").xpos.copy()
         z_offset = 0.006 if pressed else 0.02
-        self.data.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, z_offset]), [1.0, 0.0, 0.0, 0.0]]
+        self.data.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.095, 0.0035, z_offset]), [1.0, 0.0, 0.0, 0.5]]
         mj.mj_forward(self.model, self.data)
         self._probe_pressed = pressed
 

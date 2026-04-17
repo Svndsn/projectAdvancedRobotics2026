@@ -6,7 +6,8 @@ import numpy as np
 
 
 DEFAULT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/demo.png_rgb.png"
-
+REF_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/testing_pictures/ref_frame.png"
+X_MOVEMENT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/testing_pictures/x_movement.png"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -15,6 +16,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--image",
         default=DEFAULT_IMAGE_PATH,
+        help="Path to input image.",
+    )
+    parser.add_argument(
+        "--ref_image",
+        default=REF_IMAGE_PATH,
+        help="Path to input image.",
+    )
+    parser.add_argument(
+        "--movement_image",
+        default=X_MOVEMENT_IMAGE_PATH,
         help="Path to input image.",
     )
     parser.add_argument(
@@ -147,12 +158,15 @@ def draw_axes(
     return vis
 
 
-def main() -> None:
-    args = parse_args()
+def pca_image(image_path: str, threshold: int, use_otsu: bool, output_path: str):
+    
+    
+    
 
-    img = load_grayscale_image(args.image)
-    mask, threshold_mode = create_foreground_mask(img, args.threshold, args.use_otsu)
+    img = load_grayscale_image(image_path)
+    mask, threshold_mode = create_foreground_mask(img, threshold, use_otsu)
     mask = extract_largest_component(mask)
+    
 
     ys, xs = np.where(mask > 0)
     points = np.column_stack((xs, ys)).astype(np.float64)
@@ -167,7 +181,7 @@ def main() -> None:
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
 
-    output_path = Path(args.output)
+    output_path = Path(output_path)
     if not cv2.imwrite(str(output_path), vis):
         raise IOError(f"Failed to write output image to: {output_path}")
 
@@ -177,6 +191,28 @@ def main() -> None:
     print(f"Angle (rad): {angle_rad:.6f}")
     print(f"Angle (deg): {angle_deg:.2f}")
     print(f"Saved: {output_path}")
+
+
+def main() -> None:
+
+    args = parse_args()
+
+    image_paths = [
+        args.ref_image,
+        #args.image,
+        args.movement_image,
+    ]
+
+    for image_path in image_paths:
+        output_path = f"pca_{Path(image_path).stem}.png"
+        print(f"\nProcessing: {image_path}")
+        pca_image(
+            image_path=image_path,
+            threshold=args.threshold,
+            use_otsu=args.use_otsu,
+            output_path=output_path,
+        )
+
 
 
 if __name__ == "__main__":
