@@ -6,8 +6,8 @@ import numpy as np
 
 
 DEFAULT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/demo.png_rgb.png"
-REF_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/testing_pictures/ref_frame.png"
-X_MOVEMENT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/testing_pictures/x_movement.png"
+REF_IMAGE_PATH = "testing_pictures/ref_movement.png"
+X_MOVEMENT_IMAGE_PATH = "testing_pictures/x_movement.png"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -176,12 +176,8 @@ def pca_image(image_path: str, threshold: int, use_otsu: bool, output_path: str)
 
     mean, eigenvalues, eigenvectors = compute_pca(points)
     principal_axis = eigenvectors[:, 0]
-
-    angle_rad = np.arctan2(-principal_axis[1], principal_axis[0])
+    angle_rad = np.arctan2(max(abs(principal_axis)), min(abs(principal_axis)))
     angle_deg = np.degrees(angle_rad)
-
-    if angle_deg < 0:
-        angle_deg += 180
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
 
