@@ -176,8 +176,12 @@ def pca_image(image_path: str, threshold: int, use_otsu: bool, output_path: str)
 
     mean, eigenvalues, eigenvectors = compute_pca(points)
     principal_axis = eigenvectors[:, 0]
-    angle_rad = np.arctan2(max(abs(principal_axis)), min(abs(principal_axis)))
+
+    angle_rad = np.arctan2(-principal_axis[1], principal_axis[0])
     angle_deg = np.degrees(angle_rad)
+
+    if angle_deg < 0:
+        angle_deg += 180
 
     vis = draw_axes(img, mean, eigenvalues, eigenvectors)
 
