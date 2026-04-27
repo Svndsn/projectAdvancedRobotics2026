@@ -15,6 +15,7 @@ dependencies = [
     "opencv-python==4.9.0.80",
     "pandas>=2.2.3",
     "pdoc==14.7.0",
+    "PyYAML>=6.0.2",
     "pytest==8.3.3",
     "spatialmath-python==1.1.9",
     "tensorboard==2.14.0",
