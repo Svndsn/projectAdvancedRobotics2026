@@ -7,7 +7,7 @@ import numpy as np
 
 
 DEFAULT_IMAGE_PATH = "data/img/gelsight_mini/gelsight_mini/demo.png_rgb.png"
-REF_IMAGE_PATH = "testing_pictures/ref_frame.png"
+REF_IMAGE_PATH = "screenshot_20260501_143024.png"
 X_MOVEMENT_IMAGE_PATH = "testing_pictures/x_movement.png"
 Y_MOVEMENT_IMAGE_PATH = "testing_pictures/y_movement.png"
 
