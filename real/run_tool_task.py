@@ -325,7 +325,7 @@ class ToolTaskExecutor:
                 _logger.warning("Error disconnecting gripper: %s", exc)
 
     def _move_to_pose(self, pose: sm.SE3, speed: float = 0.25, acc: float = 0.3) -> None:
-        """Move to a pose using linear motion.
+        """Move to a pose using inverse-kinematics joint motion.
         
         Parameters
         ----------
@@ -338,7 +338,43 @@ class ToolTaskExecutor:
         """
         if self.robot is None:
             return
-        self.robot.moveL(pose, speed=speed, acc=acc)
+        try:
+            self.robot.moveJ_IK(pose, speed=speed, acc=acc)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "RTDE control script is not running" not in message and "controller rejected" not in message:
+                raise
+            _logger.warning(
+                "Move-to-pose failed due to RTDE control state. Reconnecting robot control and retrying once..."
+            )
+            self._reconnect_robot_control()
+            if self.robot is None:
+                raise
+            self.robot.moveJ_IK(pose, speed=speed, acc=acc)
+
+    def _reconnect_robot_control(self) -> None:
+        """Reconnect RTDE control interface when the robot drops the active script."""
+        if self.robot is not None:
+            try:
+                self.robot.servo_stop()
+            except Exception:
+                pass
+            try:
+                self.robot.stop_script()
+            except Exception:
+                pass
+        # Recreate control interfaces to release stale ownership and restart script upload.
+        self.robot = Robot(
+            robot_ip=self.args.robot_ip,
+            T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP,
+        )
+
+    def _finish_servo_segment(self) -> None:
+        """End servo mode before switching to discrete motions."""
+        if self.robot is None:
+            return
+        self.robot.servo_stop()
+        time.sleep(0.05)
 
     def _servo_to_pose(self, pose: sm.SE3) -> None:
         """Servo to a pose with the configured servo rate.
@@ -422,6 +458,7 @@ class ToolTaskExecutor:
                         time.sleep(self.servo_dt)
 
                 _logger.info("Approach phase complete. Gripping object...")
+                self._finish_servo_segment()
                 self._grip_object()
 
                 _logger.info("Retreating (reverse approach)...")
@@ -433,6 +470,7 @@ class ToolTaskExecutor:
                         time.sleep(self.servo_dt)
 
                 _logger.info("Moving to first task pose...")
+                self._finish_servo_segment()
                 self._move_to_pose(self.task_poses[0])
 
                 _logger.info("Executing task phase (%d waypoints)...", len(self.task_poses))
@@ -445,7 +483,7 @@ class ToolTaskExecutor:
 
                 _logger.info("Task phase complete. Stopping safely...")
                 if self.robot is not None:
-                    self.robot.servo_stop()
+                    self._finish_servo_segment()
                     time.sleep(0.1)
                     self.robot.stop_script()
 
