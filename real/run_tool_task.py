@@ -212,6 +212,7 @@ class ToolTaskExecutor:
         self.task_poses = rollout_dmp(
             self.task_dmp,
             self.args.tau_scale,
+            self.approach_poses[0] if self.approach_poses else None,
         )
 
     def _safety_check(self) -> bool:
