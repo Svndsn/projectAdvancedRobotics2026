@@ -17,7 +17,7 @@ WSG50_GRIP_SPEED_MM_S = 50.0
 WSG50_RELEASE_DISTANCE_MM = 20.0
 
 # UR flange TCP -> active gripper/tool TCP transform.
-T_TCP_GRIPPER_TCP = sm.SE3.Tz(0.0)
+T_TCP_GRIPPER_TCP = sm.SE3.Tz(0.20)
 
 # world -> robot base transform
 UR5E_BASE_POS = [0.0, 0.0, 0.0]

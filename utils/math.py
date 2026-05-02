@@ -264,9 +264,12 @@ def calculate_rotation_between_vectors(
     v_from = normalize_vector(v_from)
     v_to = normalize_vector(v_to)
 
-    angle = np.arccos(
-        np.dot(v_from, v_to) / (np.linalg.norm(v_from) * np.linalg.norm(v_to))
-    )
+    denom = np.linalg.norm(v_from) * np.linalg.norm(v_to)
+    if denom < 1e-12:
+        return np.identity(3)
+    cos_angle = np.dot(v_from, v_to) / denom
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    angle = np.arccos(cos_angle)
     axis = np.cross(v_from, v_to)
     axis_norm = np.linalg.norm(axis)
 
@@ -277,6 +280,8 @@ def calculate_rotation_between_vectors(
             axis = arbitrary_orthogonal_vector(v_from)
             axis_norm = np.linalg.norm(axis)
 
+    if axis_norm < 1e-12:
+        return np.identity(3)
     axis /= axis_norm
     r = R.from_rotvec(axis * angle)
     return r.as_matrix()
@@ -551,9 +556,12 @@ def calculate_rotation_between_vectors(
     v_from = normalize_vector(v_from)
     v_to = normalize_vector(v_to)
 
-    angle = np.arccos(
-        np.dot(v_from, v_to) / (np.linalg.norm(v_from) * np.linalg.norm(v_to))
-    )
+    denom = np.linalg.norm(v_from) * np.linalg.norm(v_to)
+    if denom < 1e-12:
+        return np.identity(3)
+    cos_angle = np.dot(v_from, v_to) / denom
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    angle = np.arccos(cos_angle)
     axis = np.cross(v_from, v_to)
     axis_norm = np.linalg.norm(axis)
 
@@ -564,6 +572,8 @@ def calculate_rotation_between_vectors(
             axis = arbitrary_orthogonal_vector(v_from)
             axis_norm = np.linalg.norm(axis)
 
+    if axis_norm < 1e-12:
+        return np.identity(3)
     axis /= axis_norm
     r = R.from_rotvec(axis * angle)
     return r.as_matrix()

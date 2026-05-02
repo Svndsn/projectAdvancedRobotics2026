@@ -10,6 +10,20 @@ from ctrl.dmp_quaternion import DMPQuaternion
 import quaternion
 
 
+def _make_quaternion_sequence_continuous(quaternions: np.ndarray) -> np.ndarray:
+    """Normalize and enforce hemisphere continuity (q and -q equivalence)."""
+    q = np.asarray(quaternions, dtype=float).copy()
+    if len(q) == 0:
+        return q
+    norms = np.linalg.norm(q, axis=1, keepdims=True)
+    norms[norms < 1e-12] = 1.0
+    q /= norms
+    for i in range(1, len(q)):
+        if np.dot(q[i], q[i - 1]) < 0.0:
+            q[i] = -q[i]
+    return q
+
+
 class DMPCartesian:
     def __init__(
         self,
@@ -164,20 +178,14 @@ class DMPCartesian:
          - dt (float): Time step size.
         """
         positions = np.array([pose.t for pose in Traj])
-        quaternions = np.array([smb.r2q(pose.R) for pose in Traj])
-
-        for i in range(1, len(quaternions)):
-            quaternions[i] = (
-                -quaternions[i]
-                if np.dot(quaternions[i][1:], quaternions[i - 1][1:]) < 0
-                else quaternions[i]
-            )
+        quaternions = _make_quaternion_sequence_continuous(
+            np.array([smb.r2q(pose.R) for pose in Traj], dtype=float)
+        )
 
         self.dt = dt
         self.tau = (len(positions)) * self.dt
         self.ts = np.arange(0, self.tau, self.dt)
         self.ts = self.ts[: len(positions)]
-        print(positions.shape, quaternions.shape, self.ts.shape)
         self.train(positions, quaternions, self.ts, self.tau)
         self.reset()
 
@@ -194,19 +202,13 @@ class DMPCartesian:
          - ts (np.ndarray): Timestamp vector for trajectory points.
         """
         positions = np.array([pose.t for pose in Traj])
-        quaternions = np.array([smb.r2q(pose.R) for pose in Traj])
-
-        for i in range(1, len(quaternions)):
-            quaternions[i] = (
-                -quaternions[i]
-                if np.dot(quaternions[i][1:], quaternions[i - 1][1:]) < 0
-                else quaternions[i]
-            )
+        quaternions = _make_quaternion_sequence_continuous(
+            np.array([smb.r2q(pose.R) for pose in Traj], dtype=float)
+        )
 
         self.ts = ts
         self.tau = ts[-1] if len(ts) > 0 else 1.0
         self.dt = np.mean(np.gradient(ts)) if len(ts) > 1 else None
-        print(positions.shape, quaternions.shape, self.ts.shape)
         self.train(positions, quaternions, self.ts, self.tau)
         self.reset()
 

@@ -49,6 +49,40 @@ def _pose_row_to_se3(row: pd.Series, prefix: str) -> sm.SE3:
     return sm.SE3.Rt(rotation, position, check=False)
 
 
+def _unwrap_rotvec_sequence(rotvecs: np.ndarray) -> np.ndarray:
+    """Make rotvec samples temporally continuous across ±pi branch flips.
+
+    Equivalent axis-angle representations can jump by ~2*pi when crossing the
+    principal rotvec branch. This picks the sign/2*pi-shifted representation
+    closest to the previous sample.
+    """
+    if len(rotvecs) <= 1:
+        return rotvecs.copy()
+
+    out = rotvecs.astype(float, copy=True)
+    two_pi = 2.0 * np.pi
+    for i in range(1, len(out)):
+        prev = out[i - 1]
+        cur = out[i]
+        norm = float(np.linalg.norm(cur))
+        if norm < 1e-12:
+            continue
+        axis = cur / norm
+        candidates = np.vstack(
+            [
+                cur,
+                -cur,
+                axis * (norm + two_pi),
+                axis * (norm - two_pi),
+                -axis * (norm + two_pi),
+                -axis * (norm - two_pi),
+            ]
+        )
+        dists = np.linalg.norm(candidates - prev[None, :], axis=1)
+        out[i] = candidates[int(np.argmin(dists))]
+    return out
+
+
 def _detect_pose_prefix(df: pd.DataFrame) -> str:
     if all(f"actual_TCP_pose_{i}" in df.columns for i in range(6)):
         return "actual_TCP_pose"
@@ -62,7 +96,17 @@ def _detect_pose_prefix(df: pd.DataFrame) -> str:
 def _load_demo_data(demo_csv: str | Path) -> tuple[list[sm.SE3], Optional[np.ndarray], str]:
     df = pd.read_csv(demo_csv)
     prefix = _detect_pose_prefix(df)
-    poses = [_pose_row_to_se3(row, prefix) for _, row in df.iterrows()]
+    pos = df[[f"{prefix}_{i}" for i in range(3)]].to_numpy(dtype=float)
+    rotvec = df[[f"{prefix}_{i}" for i in range(3, 6)]].to_numpy(dtype=float)
+    rotvec = _unwrap_rotvec_sequence(rotvec)
+    poses = []
+    for p, r in zip(pos, rotvec):
+        angle = float(np.linalg.norm(r))
+        if angle > 1e-12:
+            rotation = sm.SO3.AngVec(angle, r / angle).R
+        else:
+            rotation = np.eye(3)
+        poses.append(sm.SE3.Rt(rotation, p, check=False))
 
     ts: Optional[np.ndarray] = None
     if "t" in df.columns and len(df) >= 2:
@@ -479,9 +523,6 @@ class ToolTaskExecutor:
             self._finish_servo_segment()
 
             self._grip_object()
-
-            self._servo_phase("deapproach", list(reversed(self.approach_poses)))
-            self._finish_servo_segment()
 
             self._move_to_pose(self.task_poses[0])
             self._servo_phase("task", self.task_poses)
