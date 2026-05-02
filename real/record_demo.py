@@ -13,7 +13,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_REPO_ROOT))
 
 from real.config import T_TCP_GRIPPER_TCP
-from real.robot import Robot
+from real.robot_state import RobotState
 from real.utils import se3_to_pose
 
 
@@ -61,7 +61,7 @@ def main() -> None:
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    robot = Robot(robot_ip=args.robot_ip, T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP)
+    robot = RobotState(robot_ip=args.robot_ip, T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP)
 
     dt = 1.0 / args.rate
     rows = []
