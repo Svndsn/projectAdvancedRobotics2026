@@ -1,16 +1,14 @@
 """Approach-grasp-task DMP executor for UR5e with tool manipulation.
 
-This module provides a task executor that combines approach and task DMPs
-with gripper control. It supports both dry-run (validation) and execution modes.
+Primary runner for real hardware.
 """
 
 import argparse
 import logging
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -24,17 +22,16 @@ if __package__ in (None, ""):
 from ctrl.dmp_cartesian.dmp_cartesian import DMPCartesian
 from real.config import ROBOT_IP, T_TCP_GRIPPER_TCP
 from real.robot import Robot
-from real.wsg50_gripper import WSG50Gripper, WSG50CommandError
+from real.wsg50_gripper import WSG50CommandError, WSG50Gripper
 from real.config import (
-    WSG50_IP,
-    WSG50_PORT,
-    WSG50_GRIP_SPEED_MM_S,
-    WSG50_GRIP_FORCE_N,
-    WSG50_GRIP_WIDTH_MM,
     WSG50_CLOSE_WIDTH_MM,
+    WSG50_GRIP_FORCE_N,
+    WSG50_GRIP_SPEED_MM_S,
+    WSG50_GRIP_WIDTH_MM,
+    WSG50_IP,
     WSG50_OPEN_WIDTH_MM,
+    WSG50_PORT,
 )
-from real.utils import se3_to_pose
 from utils.math import npq2np
 from utils.sm import make_tf
 
@@ -42,19 +39,17 @@ _logger = logging.getLogger(__name__)
 
 
 def _pose_row_to_se3(row: pd.Series, prefix: str) -> sm.SE3:
-    """Convert a DataFrame row to an SE3 pose."""
     position = np.array([row[f"{prefix}_{i}"] for i in range(3)], dtype=float)
     rotvec = np.array([row[f"{prefix}_{i}"] for i in range(3, 6)], dtype=float)
     angle = float(np.linalg.norm(rotvec))
     if angle > 1e-12:
-        R = sm.SO3.AngVec(angle, rotvec / angle).R
+        rotation = sm.SO3.AngVec(angle, rotvec / angle).R
     else:
-        R = np.eye(3)
-    return sm.SE3.Rt(R, position, check=False)
+        rotation = np.eye(3)
+    return sm.SE3.Rt(rotation, position, check=False)
 
 
 def _detect_pose_prefix(df: pd.DataFrame) -> str:
-    """Detect which pose column prefix is used in the CSV."""
     if all(f"actual_TCP_pose_{i}" in df.columns for i in range(6)):
         return "actual_TCP_pose"
     if all(f"target_TCP_pose_{i}" in df.columns for i in range(6)):
@@ -64,42 +59,56 @@ def _detect_pose_prefix(df: pd.DataFrame) -> str:
     )
 
 
-def load_demo_poses(demo_csv: str | Path) -> list[sm.SE3]:
-    """Load demo poses from a CSV file."""
+def _load_demo_data(demo_csv: str | Path) -> tuple[list[sm.SE3], Optional[np.ndarray], str]:
     df = pd.read_csv(demo_csv)
     prefix = _detect_pose_prefix(df)
-    return [_pose_row_to_se3(row, prefix) for _, row in df.iterrows()]
+    poses = [_pose_row_to_se3(row, prefix) for _, row in df.iterrows()]
+
+    ts: Optional[np.ndarray] = None
+    if "t" in df.columns and len(df) >= 2:
+        raw_t = pd.to_numeric(df["t"], errors="coerce").to_numpy(dtype=float)
+        if np.isfinite(raw_t).all() and np.all(np.diff(raw_t) > 0.0):
+            ts = raw_t - raw_t[0]
+
+    return poses, ts, prefix
+
+
+def _parse_pose_str(s: str) -> sm.SE3:
+    parts = [float(p) for p in s.split(",")]
+    if len(parts) != 6:
+        raise ValueError("Pose must be 6 comma-separated floats: x,y,z,rx,ry,rz")
+    position = np.array(parts[:3], dtype=float)
+    rotvec = np.array(parts[3:], dtype=float)
+    angle = float(np.linalg.norm(rotvec))
+    if angle > 1e-12:
+        rotation = sm.SO3.AngVec(angle, rotvec / angle).R
+    else:
+        rotation = np.eye(3)
+    return sm.SE3.Rt(rotation, position, check=False)
+
+
+def _load_pose_from_csv(csv_path: str | Path, row_index: int) -> sm.SE3:
+    df = pd.read_csv(csv_path)
+    prefix = _detect_pose_prefix(df)
+    row = df.iloc[row_index]
+    return _pose_row_to_se3(row, prefix)
+
+
+def _resolve_pose(pose_input: Optional[str], default: sm.SE3, row_index: int) -> sm.SE3:
+    if pose_input is None:
+        return default
+    p = Path(pose_input)
+    if p.exists():
+        return _load_pose_from_csv(p, row_index=row_index)
+    return _parse_pose_str(pose_input)
 
 
 def rollout_dmp(
     dmp: DMPCartesian,
     tau_scale: float,
-    start_pose: Optional[sm.SE3] = None,
-    end_pose: Optional[sm.SE3] = None,
 ) -> list[sm.SE3]:
-    """Roll out a trained DMP with given start and end poses.
-    
-    Parameters
-    ----------
-    dmp : DMPCartesian
-        Trained DMP instance.
-    tau_scale : float
-        Time scaling factor (> 0).
-    start_pose : sm.SE3, optional
-        New start pose. If None, uses DMP's current start.
-    end_pose : sm.SE3, optional
-        New end pose. If None, uses DMP's current end.
-    
-    Returns
-    -------
-    list[sm.SE3]
-        List of SE3 poses along the rollout trajectory.
-    """
     if tau_scale <= 0:
         raise ValueError("tau_scale must be greater than 0")
-
-    if start_pose is not None and end_pose is not None:
-        dmp.set_start_goal(start_pose, end_pose)
 
     rollout_tau = dmp.tau * tau_scale
     n_steps = max(2, int(round(len(dmp.ts) * tau_scale)))
@@ -107,9 +116,18 @@ def rollout_dmp(
     p, _, _, q, _, _ = dmp.rollout(rollout_ts, rollout_tau)
     return [make_tf(p[i], npq2np(q[i])) for i in range(len(p))]
 
+def _all_poses_valid(poses: list[sm.SE3]) -> bool:
+    return all(_is_pose_valid(p) for p in poses)
+
+
+def _pose_jump(a: sm.SE3, b: sm.SE3) -> tuple[float, float]:
+    delta = a.inv() @ b
+    translation = float(np.linalg.norm(delta.t))
+    angle, _ = delta.angvec()
+    return translation, abs(float(angle))
+
 
 def _is_pose_valid(pose: sm.SE3) -> bool:
-    """Check if a pose contains valid (non-NaN) values."""
     return not (np.isnan(pose.A).any() or np.isinf(pose.A).any())
 
 
@@ -117,201 +135,261 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Execute approach-grasp-task DMPs on UR5e with gripper."
     )
+    parser.add_argument("--approach-demo", required=True, help="Path to approach demo CSV file.")
+    parser.add_argument("--task-demo", required=True, help="Path to task demo CSV file.")
+    parser.add_argument("--robot-ip", default=ROBOT_IP, help=f"UR5e controller IP (default: {ROBOT_IP}).")
+    parser.add_argument("--servo-rate", type=float, default=400.0, help="Servo loop frequency in Hz.")
+    parser.add_argument("--approach-tau-scale", type=float, default=1.0)
+    parser.add_argument("--task-tau-scale", type=float, default=1.0)
+    parser.add_argument("--tau-scale", type=float, default=None, help="Legacy shared tau scale; overrides both when set.")
     parser.add_argument(
-        "--approach-demo",
-        required=True,
-        help="Path to approach demo CSV file.",
+        "--approach-start-pose",
+        type=str,
+        default=None,
+        help="Approach start pose: file path (first row) or CSV 'x,y,z,rx,ry,rz'.",
     )
     parser.add_argument(
-        "--task-demo",
-        required=True,
-        help="Path to task demo CSV file.",
+        "--tool-pose",
+        type=str,
+        default=None,
+        help="Tool contact pose: file path (first row) or CSV 'x,y,z,rx,ry,rz'.",
     )
     parser.add_argument(
-        "--robot-ip",
-        default=ROBOT_IP,
-        help=f"UR5e controller IP address (default: {ROBOT_IP}).",
+        "--task-goal-pose",
+        type=str,
+        default=None,
+        help="Task goal pose: file path (last row) or CSV 'x,y,z,rx,ry,rz'.",
     )
-    parser.add_argument(
-        "--servo-rate",
-        type=float,
-        default=400.0,
-        help="Servo loop frequency in Hz (default: 400).",
-    )
-    parser.add_argument(
-        "--tau-scale",
-        type=float,
-        default=1.0,
-        help="Time scaling factor for DMPs (default: 1.0).",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Validate and print summary without connecting to robot.",
-    )
+    parser.add_argument("--max-phase-jump-m", type=float, default=0.02)
+    parser.add_argument("--max-phase-jump-rad", type=float, default=0.35)
+    parser.add_argument("--speed", type=float, default=0.05)
+    parser.add_argument("--acc", type=float, default=0.1)
+    parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
 class ToolTaskExecutor:
-    """Executor for approach-grasp-task with tool manipulation."""
-
     def __init__(self, args: argparse.Namespace) -> None:
-        """Initialize the executor and load/train DMPs.
-        
-        Parameters
-        ----------
-        args : argparse.Namespace
-            Parsed command-line arguments.
-        """
         self.args = args
         self.servo_dt = 1.0 / args.servo_rate
+        if args.tau_scale is not None:
+            self.approach_tau_scale = args.tau_scale
+            self.task_tau_scale = args.tau_scale
+        else:
+            self.approach_tau_scale = args.approach_tau_scale
+            self.task_tau_scale = args.task_tau_scale
 
-        # Load demo poses from CSV files
-        _logger.info("Loading demo poses from %s and %s", args.approach_demo, args.task_demo)
-        approach_demo_poses = load_demo_poses(args.approach_demo)
-        task_demo_poses = load_demo_poses(args.task_demo)
+        _logger.info("Loading demos from %s and %s", args.approach_demo, args.task_demo)
+        self.approach_demo_poses, self.approach_ts, _ = _load_demo_data(args.approach_demo)
+        self.task_demo_poses, self.task_ts, _ = _load_demo_data(args.task_demo)
 
-        _logger.info(
-            "Loaded %d approach poses and %d task poses.",
-            len(approach_demo_poses),
-            len(task_demo_poses),
-        )
-
-        # Train DMPs from demo poses
         self.approach_dmp = DMPCartesian(roto_dilatation=True)
-        self.approach_dmp.load(approach_demo_poses)
-
         self.task_dmp = DMPCartesian(roto_dilatation=True)
-        self.task_dmp.load(task_demo_poses)
+        self._approach_loaded_with_time = False
+        self._task_loaded_with_time = False
+        self._train_dmp(self.approach_dmp, self.approach_demo_poses, self.approach_ts, "approach")
+        self._train_dmp(self.task_dmp, self.task_demo_poses, self.task_ts, "task")
 
-        _logger.info(
-            "Trained DMPs: approach tau=%.3f s, task tau=%.3f s",
-            self.approach_dmp.tau,
-            self.task_dmp.tau,
-        )
+        self.approach_start_pose: sm.SE3 = self.approach_demo_poses[0]
+        self.tool_contact_pose: sm.SE3 = self.approach_demo_poses[-1]
+        self.task_goal_pose: sm.SE3 = self.task_demo_poses[-1]
 
-        # Rollout poses (will be set up after loading)
         self.approach_poses: list[sm.SE3] = []
         self.task_poses: list[sm.SE3] = []
-
-        # Hardware references
         self.robot: Optional[Robot] = None
         self.gripper: Optional[WSG50Gripper] = None
 
-        self._t0 = time.monotonic()
+    def _train_dmp(
+        self,
+        dmp: DMPCartesian,
+        poses: list[sm.SE3],
+        ts: Optional[np.ndarray],
+        name: str,
+    ) -> None:
+        if ts is not None:
+            dmp.load_with_time(poses, ts)
+            if name == "approach":
+                self._approach_loaded_with_time = True
+            elif name == "task":
+                self._task_loaded_with_time = True
+            duration = float(ts[-1])
+            dt_mean = float(np.mean(np.diff(ts)))
+            hz = (1.0 / dt_mean) if dt_mean > 0 else float("nan")
+            _logger.info(
+                "Loaded %s DMP with timestamps: samples=%d duration=%.3fs mean_dt=%.4fs (~%.1fHz)",
+                name,
+                len(poses),
+                duration,
+                dt_mean,
+                hz,
+            )
+            return
+
+        dmp.load(poses)
+        if name == "approach":
+            self._approach_loaded_with_time = False
+        elif name == "task":
+            self._task_loaded_with_time = False
+        _logger.info(
+            "Loaded %s DMP without timestamps: samples=%d duration=%.3fs (fallback fixed dt)",
+            name,
+            len(poses),
+            dmp.tau,
+        )
 
     def _setup_rollouts(self) -> None:
-        """Generate rollout trajectories from trained DMPs."""
-        _logger.info("Rolling out approach DMP with tau_scale=%.2f", self.args.tau_scale)
-        self.approach_poses = rollout_dmp(
-            self.approach_dmp,
-            self.args.tau_scale,
+        self.approach_start_pose = _resolve_pose(
+            self.args.approach_start_pose,
+            self.approach_demo_poses[0],
+            row_index=0,
+        )
+        self.tool_contact_pose = _resolve_pose(
+            self.args.tool_pose,
+            self.approach_demo_poses[-1],
+            row_index=0,
+        )
+        self.task_goal_pose = _resolve_pose(
+            self.args.task_goal_pose,
+            self.task_demo_poses[-1],
+            row_index=-1,
         )
 
-        _logger.info("Rolling out task DMP with tau_scale=%.2f", self.args.tau_scale)
-        self.task_poses = rollout_dmp(
-            self.task_dmp,
-            self.args.tau_scale,
-            self.approach_poses[0] if self.approach_poses else None,
+        self.approach_dmp.set_start_goal(self.approach_start_pose, self.tool_contact_pose)
+        self.task_dmp.set_start_goal(self.tool_contact_pose, self.task_goal_pose)
+
+        self.approach_poses = rollout_dmp(self.approach_dmp, self.approach_tau_scale)
+        self.task_poses = rollout_dmp(self.task_dmp, self.task_tau_scale)
+        self._fallback_to_fixed_dt_if_invalid()
+
+        _logger.info(
+            "Rollout durations: approach=%.3fs task=%.3fs",
+            self.approach_dmp.tau * self.approach_tau_scale,
+            self.task_dmp.tau * self.task_tau_scale,
         )
+
+    def _fallback_to_fixed_dt_if_invalid(self) -> None:
+        """Retry with fixed-dt DMP training when timestamp rollouts become invalid."""
+        approach_invalid = not _all_poses_valid(self.approach_poses)
+        task_invalid = not _all_poses_valid(self.task_poses)
+        if not approach_invalid and not task_invalid:
+            return
+
+        if approach_invalid and self._approach_loaded_with_time:
+            _logger.warning(
+                "Approach rollout invalid after timestamp training; retrying with fixed-dt DMP load()."
+            )
+            self.approach_dmp.load(self.approach_demo_poses)
+            self._approach_loaded_with_time = False
+
+        if task_invalid and self._task_loaded_with_time:
+            _logger.warning(
+                "Task rollout invalid after timestamp training; retrying with fixed-dt DMP load()."
+            )
+            self.task_dmp.load(self.task_demo_poses)
+            self._task_loaded_with_time = False
+
+        self.approach_dmp.set_start_goal(self.approach_start_pose, self.tool_contact_pose)
+        self.task_dmp.set_start_goal(self.tool_contact_pose, self.task_goal_pose)
+        self.approach_poses = rollout_dmp(self.approach_dmp, self.approach_tau_scale)
+        self.task_poses = rollout_dmp(self.task_dmp, self.task_tau_scale)
+
+        # Final stability guard: if DMP rollout is still invalid, use raw demos.
+        if not _all_poses_valid(self.approach_poses):
+            _logger.warning(
+                "Approach rollout still invalid after fixed-dt fallback; using raw approach demo poses."
+            )
+            self.approach_poses = list(self.approach_demo_poses)
+        if not _all_poses_valid(self.task_poses):
+            _logger.warning(
+                "Task rollout still invalid after fixed-dt fallback; using raw task demo poses."
+            )
+            self.task_poses = list(self.task_demo_poses)
+
+    def _check_phase_continuity(self) -> bool:
+        if not self.approach_poses or not self.task_poses:
+            return False
+
+        checks = [
+            ("approach_end -> retreat_start", self.approach_poses[-1], self.approach_poses[-1]),
+            ("tool_contact -> task_start", self.tool_contact_pose, self.task_poses[0]),
+        ]
+        ok = True
+        for name, a, b in checks:
+            d_m, d_rad = _pose_jump(a, b)
+            _logger.info("Continuity %s: d=%.4fm, angle=%.4frad", name, d_m, d_rad)
+            if d_m > self.args.max_phase_jump_m or d_rad > self.args.max_phase_jump_rad:
+                _logger.error(
+                    "Continuity violation for %s (limits %.4fm / %.4frad)",
+                    name,
+                    self.args.max_phase_jump_m,
+                    self.args.max_phase_jump_rad,
+                )
+                ok = False
+        return ok
 
     def _safety_check(self) -> bool:
-        """Validate that all rollout poses are valid.
-        
-        Returns
-        -------
-        bool
-            True if all poses are valid, False otherwise.
-        """
-        _logger.info("Performing safety check on %d + %d poses...", 
-                     len(self.approach_poses), len(self.task_poses))
-        
         all_valid = True
         for i, pose in enumerate(self.approach_poses):
             if not _is_pose_valid(pose):
-                _logger.error("Invalid approach pose at index %d: %s", i, pose)
+                _logger.error("Invalid approach pose at index %d", i)
                 all_valid = False
-
         for i, pose in enumerate(self.task_poses):
             if not _is_pose_valid(pose):
-                _logger.error("Invalid task pose at index %d: %s", i, pose)
+                _logger.error("Invalid task pose at index %d", i)
                 all_valid = False
-
-        if all_valid:
-            _logger.info("✓ All poses are valid (no NaN/Inf values).")
-        else:
-            _logger.error("✗ Safety check failed: invalid poses found.")
-
         return all_valid
 
     def _print_summary(self) -> None:
-        """Print a summary of the task configuration."""
         print("\n" + "=" * 70)
         print("TOOL TASK EXECUTION SUMMARY")
         print("=" * 70)
-        print(f"\nConfiguration:")
+        print("\nConfiguration:")
         print(f"  Approach demo:      {self.args.approach_demo}")
         print(f"  Task demo:          {self.args.task_demo}")
         print(f"  Servo rate:         {self.args.servo_rate:.1f} Hz")
-        print(f"  DMP time scale:     {self.args.tau_scale:.2f}x")
+        print(f"  Approach tau scale: {self.approach_tau_scale:.2f}x")
+        print(f"  Task tau scale:     {self.task_tau_scale:.2f}x")
         print(f"  Dry-run mode:       {self.args.dry_run}")
+        print(f"  TCP transform:      {T_TCP_GRIPPER_TCP}")
 
-        print(f"\nApproach Phase:")
-        print(f"  Demo poses:         {len(self.approach_dmp.ts)} samples")
+        print("\nCalibration Checklist:")
+        print("  1) Measure flange->tool TCP and set T_TCP_GRIPPER_TCP in real/config.py")
+        print("  2) Use same TCP for recording (real/record_demo.py) and execution")
+        print("  3) Verify UR Remote Control mode + payload/TCP setup on robot")
+
+        print("\nApproach Phase:")
+        print(f"  Demo samples:       {len(self.approach_dmp.ts)}")
         print(f"  Demo duration:      {self.approach_dmp.tau:.3f} s")
-        print(f"  Rollout poses:      {len(self.approach_poses)} waypoints")
-        print(f"  Rollout duration:   {self.approach_dmp.tau * self.args.tau_scale:.3f} s")
-        if self.approach_poses:
-            start_pose = self.approach_poses[0]
-            end_pose = self.approach_poses[-1]
-            print(f"  Start position:     [{start_pose.t[0]:.4f}, {start_pose.t[1]:.4f}, {start_pose.t[2]:.4f}]")
-            print(f"  End position:       [{end_pose.t[0]:.4f}, {end_pose.t[1]:.4f}, {end_pose.t[2]:.4f}]")
+        print(f"  Rollout poses:      {len(self.approach_poses)}")
+        print(f"  Rollout duration:   {self.approach_dmp.tau * self.approach_tau_scale:.3f} s")
 
-        print(f"\nTask Phase:")
-        print(f"  Demo poses:         {len(self.task_dmp.ts)} samples")
+        print("\nTask Phase:")
+        print(f"  Demo samples:       {len(self.task_dmp.ts)}")
         print(f"  Demo duration:      {self.task_dmp.tau:.3f} s")
-        print(f"  Rollout poses:      {len(self.task_poses)} waypoints")
-        print(f"  Rollout duration:   {self.task_dmp.tau * self.args.tau_scale:.3f} s")
-        if self.task_poses:
-            start_pose = self.task_poses[0]
-            end_pose = self.task_poses[-1]
-            print(f"  Start position:     [{start_pose.t[0]:.4f}, {start_pose.t[1]:.4f}, {start_pose.t[2]:.4f}]")
-            print(f"  End position:       [{end_pose.t[0]:.4f}, {end_pose.t[1]:.4f}, {end_pose.t[2]:.4f}]")
-
+        print(f"  Rollout poses:      {len(self.task_poses)}")
+        print(f"  Rollout duration:   {self.task_dmp.tau * self.task_tau_scale:.3f} s")
         print("\n" + "=" * 70 + "\n")
 
     def execute_dry_run(self) -> None:
-        """Execute a dry-run: load, train, rollout, validate, print summary."""
-        _logger.info("Starting dry-run execution...")
         self._setup_rollouts()
-
         if not self._safety_check():
-            _logger.error("Dry-run failed safety check. Aborting.")
-            return
-
+            raise RuntimeError("Dry-run failed safety check")
+        if not self._check_phase_continuity():
+            raise RuntimeError("Dry-run failed continuity checks")
         self._print_summary()
-        _logger.info("Dry-run completed successfully.")
 
     def _connect_robot(self) -> None:
-        """Connect to the robot and gripper."""
-        _logger.info("Connecting to robot at %s...", self.args.robot_ip)
-        self.robot = Robot(
-            robot_ip=self.args.robot_ip,
-            T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP,
-        )
-        _logger.info("Connected to robot.")
-
-        _logger.info("Connecting to WSG50 gripper...")
+        _logger.info("Connecting to robot at %s", self.args.robot_ip)
+        self.robot = Robot(robot_ip=self.args.robot_ip, T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP)
         self.gripper = WSG50Gripper(
             host=WSG50_IP,
             port=WSG50_PORT,
             default_speed_mm_s=WSG50_GRIP_SPEED_MM_S,
         )
         self.gripper.connect()
-        _logger.info("Connected to WSG50 gripper at %s:%d.", WSG50_IP, WSG50_PORT)
+        _logger.info("Connected to robot and WSG50 (%s:%d)", WSG50_IP, WSG50_PORT)
 
     def _disconnect_robot(self) -> None:
-        """Safely disconnect from robot and gripper."""
         if self.robot is not None:
             try:
                 self.robot.servo_stop()
@@ -325,173 +403,96 @@ class ToolTaskExecutor:
             except Exception as exc:
                 _logger.warning("Error disconnecting gripper: %s", exc)
 
-    def _move_to_pose(self, pose: sm.SE3, speed: float = 0.25, acc: float = 0.3) -> None:
-        """Move to a pose using inverse-kinematics joint motion.
-        
-        Parameters
-        ----------
-        pose : sm.SE3
-            Target pose.
-        speed : float
-            Linear speed in m/s.
-        acc : float
-            Linear acceleration in m/s².
-        """
+    def _move_to_pose(self, pose: sm.SE3) -> None:
         if self.robot is None:
             return
-        try:
-            self.robot.moveJ_IK(pose, speed=speed, acc=acc)
-        except RuntimeError as exc:
-            message = str(exc)
-            if "RTDE control script is not running" not in message and "controller rejected" not in message:
-                raise
-            _logger.warning(
-                "Move-to-pose failed due to RTDE control state. Reconnecting robot control and retrying once..."
-            )
-            self._reconnect_robot_control()
-            if self.robot is None:
-                raise
-            self.robot.moveJ_IK(pose, speed=speed, acc=acc)
-
-    def _reconnect_robot_control(self) -> None:
-        """Reconnect RTDE control interface when the robot drops the active script."""
-        if self.robot is not None:
-            try:
-                self.robot.servo_stop()
-            except Exception:
-                pass
-            try:
-                self.robot.stop_script()
-            except Exception:
-                pass
-        # Recreate control interfaces to release stale ownership and restart script upload.
-        self.robot = Robot(
-            robot_ip=self.args.robot_ip,
-            T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP,
-        )
+        self.robot.moveL(pose, speed=self.args.speed, acc=self.args.acc)
 
     def _finish_servo_segment(self) -> None:
-        """End servo mode before switching to discrete motions."""
         if self.robot is None:
             return
         self.robot.servo_stop()
         time.sleep(0.05)
 
-    def _servo_to_pose(self, pose: sm.SE3) -> None:
-        """Servo to a pose with the configured servo rate.
-        
-        Parameters
-        ----------
-        pose : sm.SE3
-            Target pose.
-        """
-        if self.robot is None:
-            return
-        self.robot.servoL(
-            pose,
-            speed=0.25,
-            acc=0.3,
-            dt=self.servo_dt,
-        )
+    def _servo_phase(self, phase: str, poses: list[sm.SE3]) -> None:
+        assert self.robot is not None
+        _logger.info("Executing %s (%d waypoints)", phase, len(poses))
+        progress_every = max(1, len(poses) // 10)
+        for i, pose in enumerate(poses):
+            self.robot.servoL(pose, speed=self.args.speed, acc=self.args.acc, dt=self.servo_dt)
+            if (i + 1) % progress_every == 0 or i + 1 == len(poses):
+                _logger.info("  %s progress: %d/%d", phase, i + 1, len(poses))
+            if self.servo_dt > 0:
+                time.sleep(self.servo_dt)
 
     def _open_gripper(self) -> None:
-        """Open the gripper to maximum width."""
         if self.gripper is None:
             return
-        try:
-            _logger.info("Opening gripper...")
-            self.gripper.open(WSG50_OPEN_WIDTH_MM)
-            _logger.info("Gripper opened.")
-        except WSG50CommandError as exc:
-            _logger.error("Failed to open gripper: %s", exc)
-            raise
+        _logger.info("WSG50 OPEN width=%.2fmm speed=%.2fmm/s", WSG50_OPEN_WIDTH_MM, WSG50_GRIP_SPEED_MM_S)
+        lines = self.gripper.open(WSG50_GRIP_SPEED_MM_S)
+        _logger.info("WSG50 OPEN response: %s", " | ".join(lines))
 
     def _grip_object(self) -> None:
-        """Grip the object with configured force."""
         if self.gripper is None:
             return
         try:
-            _logger.info("Gripping object with force %.1f N...", WSG50_GRIP_FORCE_N)
-            self.gripper.grip(
+            _logger.info(
+                "WSG50 GRIP force=%.2fN width=%.2fmm speed=%.2fmm/s",
+                WSG50_GRIP_FORCE_N,
+                WSG50_GRIP_WIDTH_MM,
+                WSG50_GRIP_SPEED_MM_S,
+            )
+            lines = self.gripper.grip(
                 force_n=WSG50_GRIP_FORCE_N,
                 width_mm=WSG50_GRIP_WIDTH_MM,
                 speed_mm_s=WSG50_GRIP_SPEED_MM_S,
             )
-            _logger.info("Object gripped.")
+            _logger.info("WSG50 GRIP response: %s", " | ".join(lines))
         except WSG50CommandError as exc:
-            _logger.warning("Grip command failed: %s; attempting close fallback.", exc)
-            try:
-                self.gripper.move(
-                    WSG50_CLOSE_WIDTH_MM,
-                    WSG50_GRIP_SPEED_MM_S,
-                )
-            except WSG50CommandError as exc2:
-                _logger.error("Gripper close fallback also failed: %s", exc2)
-                raise
+            _logger.warning("WSG50 GRIP failed: %s", exc)
+            _logger.warning(
+                "WSG50 fallback MOVE width=%.2fmm speed=%.2fmm/s",
+                WSG50_CLOSE_WIDTH_MM,
+                WSG50_GRIP_SPEED_MM_S,
+            )
+            lines = self.gripper.move(WSG50_CLOSE_WIDTH_MM, WSG50_GRIP_SPEED_MM_S)
+            _logger.info("WSG50 fallback MOVE response: %s", " | ".join(lines))
 
     def execute(self) -> None:
-        """Execute the full approach-grasp-task sequence."""
         try:
+            self._setup_rollouts()
+            if not self._safety_check():
+                raise RuntimeError("Safety check failed")
+            if not self._check_phase_continuity():
+                raise RuntimeError("Continuity checks failed")
+            self._print_summary()
+
             if self.args.dry_run:
-                self.execute_dry_run()
-            else:
-                self._connect_robot()
-                self._setup_rollouts()
+                _logger.info("Dry-run completed")
+                return
 
-                if not self._safety_check():
-                    raise RuntimeError("Safety check failed.")
+            self._connect_robot()
+            self._open_gripper()
 
-                self._print_summary()
+            self._move_to_pose(self.approach_poses[0])
+            self._servo_phase("approach", self.approach_poses)
+            self._finish_servo_segment()
 
-                _logger.info("Opening gripper...")
-                self._open_gripper()
+            self._grip_object()
 
-                _logger.info("Moving to first approach pose...")
-                self._move_to_pose(self.approach_poses[0])
+            self._servo_phase("deapproach", list(reversed(self.approach_poses)))
+            self._finish_servo_segment()
 
-                _logger.info("Executing approach phase (%d waypoints)...", 
-                           len(self.approach_poses))
-                for i, pose in enumerate(self.approach_poses):
-                    self._servo_to_pose(pose)
-                    if (i + 1) % max(1, len(self.approach_poses) // 10) == 0:
-                        _logger.info("  Approach progress: %d/%d", i + 1, len(self.approach_poses))
-                    if self.servo_dt > 0:
-                        time.sleep(self.servo_dt)
+            self._move_to_pose(self.task_poses[0])
+            self._servo_phase("task", self.task_poses)
+            self._finish_servo_segment()
 
-                _logger.info("Approach phase complete. Gripping object...")
-                self._finish_servo_segment()
-                self._grip_object()
-
-                _logger.info("Retreating (reverse approach)...")
-                for i, pose in enumerate(reversed(self.approach_poses)):
-                    self._servo_to_pose(pose)
-                    if (i + 1) % max(1, len(self.approach_poses) // 10) == 0:
-                        _logger.info("  Retreat progress: %d/%d", i + 1, len(self.approach_poses))
-                    if self.servo_dt > 0:
-                        time.sleep(self.servo_dt)
-
-                _logger.info("Moving to first task pose...")
-                self._finish_servo_segment()
-                self._move_to_pose(self.task_poses[0])
-
-                _logger.info("Executing task phase (%d waypoints)...", len(self.task_poses))
-                for i, pose in enumerate(self.task_poses):
-                    self._servo_to_pose(pose)
-                    if (i + 1) % max(1, len(self.task_poses) // 10) == 0:
-                        _logger.info("  Task progress: %d/%d", i + 1, len(self.task_poses))
-                    if self.servo_dt > 0:
-                        time.sleep(self.servo_dt)
-
-                _logger.info("Task phase complete. Stopping safely...")
-                if self.robot is not None:
-                    self._finish_servo_segment()
-                    time.sleep(0.1)
-                    self.robot.stop_script()
-
-                _logger.info("Execution completed successfully.")
+            if self.robot is not None:
+                self.robot.stop_script()
+            _logger.info("Execution completed successfully")
 
         except KeyboardInterrupt:
-            _logger.warning("Interrupted by user.")
+            _logger.warning("Interrupted by user")
             raise
         except Exception as exc:
             _logger.error("Execution failed: %s", exc, exc_info=True)
@@ -501,7 +502,6 @@ class ToolTaskExecutor:
 
 
 def main() -> None:
-    """Main entry point."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
