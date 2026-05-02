@@ -180,10 +180,13 @@ def _parse_args() -> argparse.Namespace:
         description="Execute approach-grasp-task DMPs on UR5e with gripper."
     )
     parser.add_argument("--approach-demo", required=True, help="Path to approach demo CSV file.")
-    parser.add_argument("--task-demo", required=True, help="Path to task demo CSV file.")
+    parser.add_argument("--task1-demo", required=True, help="Path to task1 demo CSV file.")
+    parser.add_argument("--task2-demo", required=True, help="Path to task2 demo CSV file.")
     parser.add_argument("--robot-ip", default=ROBOT_IP, help=f"UR5e controller IP (default: {ROBOT_IP}).")
     parser.add_argument("--servo-rate", type=float, default=400.0, help="Servo loop frequency in Hz.")
     parser.add_argument("--approach-tau-scale", type=float, default=1.0)
+    parser.add_argument("--task1-tau-scale", type=float, default=None)
+    parser.add_argument("--task2-tau-scale", type=float, default=None)
     parser.add_argument("--task-tau-scale", type=float, default=1.0)
     parser.add_argument("--tau-scale", type=float, default=None, help="Legacy shared tau scale; overrides both when set.")
     parser.add_argument(
@@ -218,28 +221,46 @@ class ToolTaskExecutor:
         self.servo_dt = 1.0 / args.servo_rate
         if args.tau_scale is not None:
             self.approach_tau_scale = args.tau_scale
-            self.task_tau_scale = args.tau_scale
+            self.task1_tau_scale = args.tau_scale
+            self.task2_tau_scale = args.tau_scale
         else:
             self.approach_tau_scale = args.approach_tau_scale
-            self.task_tau_scale = args.task_tau_scale
+            shared_task_tau = args.task_tau_scale
+            self.task1_tau_scale = (
+                args.task1_tau_scale if args.task1_tau_scale is not None else shared_task_tau
+            )
+            self.task2_tau_scale = (
+                args.task2_tau_scale if args.task2_tau_scale is not None else shared_task_tau
+            )
 
-        _logger.info("Loading demos from %s and %s", args.approach_demo, args.task_demo)
+        _logger.info(
+            "Loading demos from %s, %s and %s",
+            args.approach_demo,
+            args.task1_demo,
+            args.task2_demo,
+        )
         self.approach_demo_poses, self.approach_ts, _ = _load_demo_data(args.approach_demo)
-        self.task_demo_poses, self.task_ts, _ = _load_demo_data(args.task_demo)
+        self.task1_demo_poses, self.task1_ts, _ = _load_demo_data(args.task1_demo)
+        self.task2_demo_poses, self.task2_ts, _ = _load_demo_data(args.task2_demo)
 
         self.approach_dmp = DMPCartesian(roto_dilatation=True)
-        self.task_dmp = DMPCartesian(roto_dilatation=True)
+        self.task1_dmp = DMPCartesian(roto_dilatation=True)
+        self.task2_dmp = DMPCartesian(roto_dilatation=True)
         self._approach_loaded_with_time = False
-        self._task_loaded_with_time = False
+        self._task1_loaded_with_time = False
+        self._task2_loaded_with_time = False
         self._train_dmp(self.approach_dmp, self.approach_demo_poses, self.approach_ts, "approach")
-        self._train_dmp(self.task_dmp, self.task_demo_poses, self.task_ts, "task")
+        self._train_dmp(self.task1_dmp, self.task1_demo_poses, self.task1_ts, "task1")
+        self._train_dmp(self.task2_dmp, self.task2_demo_poses, self.task2_ts, "task2")
 
         self.approach_start_pose: sm.SE3 = self.approach_demo_poses[0]
         self.tool_contact_pose: sm.SE3 = self.approach_demo_poses[-1]
-        self.task_goal_pose: sm.SE3 = self.task_demo_poses[-1]
+        self.task_mid_pose: sm.SE3 = self.task1_demo_poses[-1]
+        self.task_goal_pose: sm.SE3 = self.task2_demo_poses[-1]
 
         self.approach_poses: list[sm.SE3] = []
-        self.task_poses: list[sm.SE3] = []
+        self.task1_poses: list[sm.SE3] = []
+        self.task2_poses: list[sm.SE3] = []
         self.robot: Optional[Robot] = None
         self.gripper: Optional[WSG50Gripper] = None
 
@@ -254,8 +275,10 @@ class ToolTaskExecutor:
             dmp.load_with_time(poses, ts)
             if name == "approach":
                 self._approach_loaded_with_time = True
-            elif name == "task":
-                self._task_loaded_with_time = True
+            elif name == "task1":
+                self._task1_loaded_with_time = True
+            elif name == "task2":
+                self._task2_loaded_with_time = True
             duration = float(ts[-1])
             dt_mean = float(np.mean(np.diff(ts)))
             hz = (1.0 / dt_mean) if dt_mean > 0 else float("nan")
@@ -272,8 +295,10 @@ class ToolTaskExecutor:
         dmp.load(poses)
         if name == "approach":
             self._approach_loaded_with_time = False
-        elif name == "task":
-            self._task_loaded_with_time = False
+        elif name == "task1":
+            self._task1_loaded_with_time = False
+        elif name == "task2":
+            self._task2_loaded_with_time = False
         _logger.info(
             "Loaded %s DMP without timestamps: samples=%d duration=%.3fs (fallback fixed dt)",
             name,
@@ -294,28 +319,32 @@ class ToolTaskExecutor:
         )
         self.task_goal_pose = _resolve_pose(
             self.args.task_goal_pose,
-            self.task_demo_poses[-1],
+            self.task2_demo_poses[-1],
             row_index=-1,
         )
 
         self.approach_dmp.set_start_goal(self.approach_start_pose, self.tool_contact_pose)
-        self.task_dmp.set_start_goal(self.tool_contact_pose, self.task_goal_pose)
+        self.task1_dmp.set_start_goal(self.tool_contact_pose, self.task_mid_pose)
+        self.task2_dmp.set_start_goal(self.task_mid_pose, self.task_goal_pose)
 
         self.approach_poses = rollout_dmp(self.approach_dmp, self.approach_tau_scale)
-        self.task_poses = rollout_dmp(self.task_dmp, self.task_tau_scale)
+        self.task1_poses = rollout_dmp(self.task1_dmp, self.task1_tau_scale)
+        self.task2_poses = rollout_dmp(self.task2_dmp, self.task2_tau_scale)
         self._fallback_to_fixed_dt_if_invalid()
 
         _logger.info(
-            "Rollout durations: approach=%.3fs task=%.3fs",
+            "Rollout durations: approach=%.3fs task1=%.3fs task2=%.3fs",
             self.approach_dmp.tau * self.approach_tau_scale,
-            self.task_dmp.tau * self.task_tau_scale,
+            self.task1_dmp.tau * self.task1_tau_scale,
+            self.task2_dmp.tau * self.task2_tau_scale,
         )
 
     def _fallback_to_fixed_dt_if_invalid(self) -> None:
         """Retry with fixed-dt DMP training when timestamp rollouts become invalid."""
         approach_invalid = not _all_poses_valid(self.approach_poses)
-        task_invalid = not _all_poses_valid(self.task_poses)
-        if not approach_invalid and not task_invalid:
+        task1_invalid = not _all_poses_valid(self.task1_poses)
+        task2_invalid = not _all_poses_valid(self.task2_poses)
+        if not approach_invalid and not task1_invalid and not task2_invalid:
             return
 
         if approach_invalid and self._approach_loaded_with_time:
@@ -325,17 +354,25 @@ class ToolTaskExecutor:
             self.approach_dmp.load(self.approach_demo_poses)
             self._approach_loaded_with_time = False
 
-        if task_invalid and self._task_loaded_with_time:
+        if task1_invalid and self._task1_loaded_with_time:
             _logger.warning(
-                "Task rollout invalid after timestamp training; retrying with fixed-dt DMP load()."
+                "Task1 rollout invalid after timestamp training; retrying with fixed-dt DMP load()."
             )
-            self.task_dmp.load(self.task_demo_poses)
-            self._task_loaded_with_time = False
+            self.task1_dmp.load(self.task1_demo_poses)
+            self._task1_loaded_with_time = False
+        if task2_invalid and self._task2_loaded_with_time:
+            _logger.warning(
+                "Task2 rollout invalid after timestamp training; retrying with fixed-dt DMP load()."
+            )
+            self.task2_dmp.load(self.task2_demo_poses)
+            self._task2_loaded_with_time = False
 
         self.approach_dmp.set_start_goal(self.approach_start_pose, self.tool_contact_pose)
-        self.task_dmp.set_start_goal(self.tool_contact_pose, self.task_goal_pose)
+        self.task1_dmp.set_start_goal(self.tool_contact_pose, self.task_mid_pose)
+        self.task2_dmp.set_start_goal(self.task_mid_pose, self.task_goal_pose)
         self.approach_poses = rollout_dmp(self.approach_dmp, self.approach_tau_scale)
-        self.task_poses = rollout_dmp(self.task_dmp, self.task_tau_scale)
+        self.task1_poses = rollout_dmp(self.task1_dmp, self.task1_tau_scale)
+        self.task2_poses = rollout_dmp(self.task2_dmp, self.task2_tau_scale)
 
         # Final stability guard: if DMP rollout is still invalid, use raw demos.
         if not _all_poses_valid(self.approach_poses):
@@ -343,19 +380,25 @@ class ToolTaskExecutor:
                 "Approach rollout still invalid after fixed-dt fallback; using raw approach demo poses."
             )
             self.approach_poses = list(self.approach_demo_poses)
-        if not _all_poses_valid(self.task_poses):
+        if not _all_poses_valid(self.task1_poses):
             _logger.warning(
-                "Task rollout still invalid after fixed-dt fallback; using raw task demo poses."
+                "Task1 rollout still invalid after fixed-dt fallback; using raw task1 demo poses."
             )
-            self.task_poses = list(self.task_demo_poses)
+            self.task1_poses = list(self.task1_demo_poses)
+        if not _all_poses_valid(self.task2_poses):
+            _logger.warning(
+                "Task2 rollout still invalid after fixed-dt fallback; using raw task2 demo poses."
+            )
+            self.task2_poses = list(self.task2_demo_poses)
 
     def _check_phase_continuity(self) -> bool:
-        if not self.approach_poses or not self.task_poses:
+        if not self.approach_poses or not self.task1_poses or not self.task2_poses:
             return False
 
         checks = [
             ("approach_end -> retreat_start", self.approach_poses[-1], self.approach_poses[-1]),
-            ("tool_contact -> task_start", self.tool_contact_pose, self.task_poses[0]),
+            ("tool_contact -> task1_start", self.tool_contact_pose, self.task1_poses[0]),
+            ("task1_end -> task2_start", self.task1_poses[-1], self.task2_poses[0]),
         ]
         ok = True
         for name, a, b in checks:
@@ -377,9 +420,13 @@ class ToolTaskExecutor:
             if not _is_pose_valid(pose):
                 _logger.error("Invalid approach pose at index %d", i)
                 all_valid = False
-        for i, pose in enumerate(self.task_poses):
+        for i, pose in enumerate(self.task1_poses):
             if not _is_pose_valid(pose):
-                _logger.error("Invalid task pose at index %d", i)
+                _logger.error("Invalid task1 pose at index %d", i)
+                all_valid = False
+        for i, pose in enumerate(self.task2_poses):
+            if not _is_pose_valid(pose):
+                _logger.error("Invalid task2 pose at index %d", i)
                 all_valid = False
         return all_valid
 
@@ -389,10 +436,12 @@ class ToolTaskExecutor:
         print("=" * 70)
         print("\nConfiguration:")
         print(f"  Approach demo:      {self.args.approach_demo}")
-        print(f"  Task demo:          {self.args.task_demo}")
+        print(f"  Task1 demo:         {self.args.task1_demo}")
+        print(f"  Task2 demo:         {self.args.task2_demo}")
         print(f"  Servo rate:         {self.args.servo_rate:.1f} Hz")
         print(f"  Approach tau scale: {self.approach_tau_scale:.2f}x")
-        print(f"  Task tau scale:     {self.task_tau_scale:.2f}x")
+        print(f"  Task1 tau scale:    {self.task1_tau_scale:.2f}x")
+        print(f"  Task2 tau scale:    {self.task2_tau_scale:.2f}x")
         print(f"  Dry-run mode:       {self.args.dry_run}")
         print(f"  TCP transform:      {T_TCP_GRIPPER_TCP}")
 
@@ -407,11 +456,17 @@ class ToolTaskExecutor:
         print(f"  Rollout poses:      {len(self.approach_poses)}")
         print(f"  Rollout duration:   {self.approach_dmp.tau * self.approach_tau_scale:.3f} s")
 
-        print("\nTask Phase:")
-        print(f"  Demo samples:       {len(self.task_dmp.ts)}")
-        print(f"  Demo duration:      {self.task_dmp.tau:.3f} s")
-        print(f"  Rollout poses:      {len(self.task_poses)}")
-        print(f"  Rollout duration:   {self.task_dmp.tau * self.task_tau_scale:.3f} s")
+        print("\nTask1 Phase:")
+        print(f"  Demo samples:       {len(self.task1_dmp.ts)}")
+        print(f"  Demo duration:      {self.task1_dmp.tau:.3f} s")
+        print(f"  Rollout poses:      {len(self.task1_poses)}")
+        print(f"  Rollout duration:   {self.task1_dmp.tau * self.task1_tau_scale:.3f} s")
+
+        print("\nTask2 Phase:")
+        print(f"  Demo samples:       {len(self.task2_dmp.ts)}")
+        print(f"  Demo duration:      {self.task2_dmp.tau:.3f} s")
+        print(f"  Rollout poses:      {len(self.task2_poses)}")
+        print(f"  Rollout duration:   {self.task2_dmp.tau * self.task2_tau_scale:.3f} s")
         print("\n" + "=" * 70 + "\n")
 
     def execute_dry_run(self) -> None:
@@ -524,8 +579,12 @@ class ToolTaskExecutor:
 
             self._grip_object()
 
-            self._move_to_pose(self.task_poses[0])
-            self._servo_phase("task", self.task_poses)
+            self._move_to_pose(self.task1_poses[0])
+            self._servo_phase("task1", self.task1_poses)
+            self._finish_servo_segment()
+
+            self._move_to_pose(self.task2_poses[0])
+            self._servo_phase("task2", self.task2_poses)
             self._finish_servo_segment()
 
             if self.robot is not None:
