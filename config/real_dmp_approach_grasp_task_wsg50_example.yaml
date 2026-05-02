@@ -1,0 +1,47 @@
+# Example configuration for real/dmp_approach_grasp_task_ur5e.py
+
+demos:
+  approach: data/demo/approach.csv
+  task: data/demo/task.csv
+
+logging:
+  replay_log_out: data/demo/real_approach_grasp_task_wsg50_run.csv
+
+robot:
+  ip: 192.168.1.158
+
+gripper:
+  ip: 192.168.1.20
+  port: 1000
+  open_width_mm: 100.0
+  pregrip_width_mm: 80.0
+  # Leave null to call GRIP(force). Set this to the object's expected width
+  # only after tuning the WSG part width tolerance/clamping travel.
+  grip_width_mm:
+  # If GRIP fails, fallback to MOVE(close_width_mm). Tune this to the tool width.
+  close_width_mm: 0.0
+  grip_fallback_to_move: true
+  grip_force_n: 40.0
+  grip_speed_mm_s: 50.0
+  release_distance_mm: 20.0
+  skip_home: false
+  keep_gripped: false
+
+tau_scale:
+  approach: 5.0
+  task: 5.0
+
+timing:
+  close_hold_s: 0.5
+  open_hold_s: 0.5
+
+correction:
+  # Leave empty for no correction, or use "your_module:YourProvider".
+  provider: ""
+
+safety:
+  speed: 0.05
+  acc: 0.1
+  servo_dt: 0.0025
+  max_translation_correction_m: 0.02
+  max_rotation_correction_rad: 0.35

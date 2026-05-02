@@ -1,0 +1,37 @@
+# Example configuration for sims/dmp_approach_grasp_task_ur5e.py
+
+demos:
+  approach: data/demo/sim_20260427_074807.csv
+  task: data/demo/sim_20260427_074919.csv
+
+logging:
+  replay_log_out: data/demo/approach_grasp_task_run.csv
+
+object:
+  name: pickup_object
+  pos: [0.62, -0.18, 0.05]
+  rotvec: [0.0, 0.0, 0.0]
+  size: [0.015, 0.015, 0.03]
+  mass: 0.2
+
+offsets:
+  approach:
+    start: [0.0, 0.0, 0.20]
+    goal: [0.0, 0.0, 0.10]
+  task:
+    start: [0.0, 0.0, 0.10]
+    goal: [0.16, 0.0, 0.12]
+
+tau_scale:
+  approach: 5.0
+  task: 5.0
+
+gripper:
+  open: 0.0
+  close: 255.0
+
+timing:
+  close_hold_s: 0.5
+  grasp_timeout: 1.5
+  open_hold_s: 0.5
+  hold_final_s: 2.0

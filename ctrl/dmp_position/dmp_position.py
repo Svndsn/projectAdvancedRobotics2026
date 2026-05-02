@@ -252,15 +252,24 @@ class DMPPosition:
         Update parameters when the goal position changes.
         """
         # print("Updating goal rotation parameters")
-        self._sg = np.linalg.norm(self._gp_train - self._p0_train) / np.linalg.norm(
-            self._gp - self._p0
-        )
+        if np.linalg.norm(self._gp - self._p0) < 1e-6:
+            self._sg = 1.0
+        else:
+            self._sg = np.linalg.norm(self._gp_train - self._p0_train) / np.linalg.norm(
+                self._gp - self._p0
+            )
 
         v_new = np.array(self._gp) - np.array(self._p0)
-        v_new = normalize_vector(v_new)
+        if np.linalg.norm(v_new) > 1e-6:
+            v_new = normalize_vector(v_new)
         v_old = np.array(self._gp_train) - np.array(self._p0_train)
-        v_old = normalize_vector(v_old)
-        self._R_fx = calculate_rotation_between_vectors(v_old, v_new)
+        if np.linalg.norm(v_old) > 1e-6:
+            v_old = normalize_vector(v_old)
+        
+        if np.linalg.norm(v_new) < 1e-6 or np.linalg.norm(v_old) < 1e-6:
+            self._R_fx = np.eye(3)
+        else:
+            self._R_fx = calculate_rotation_between_vectors(v_old, v_new)
         # print("Position fx rotation: ", self._R_fx)
 
     @property
