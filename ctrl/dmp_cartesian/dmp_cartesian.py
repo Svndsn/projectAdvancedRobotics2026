@@ -181,6 +181,35 @@ class DMPCartesian:
         self.train(positions, quaternions, self.ts, self.tau)
         self.reset()
 
+    def load_with_time(self, Traj: sm.SE3, ts: np.ndarray) -> None:
+        """
+        Load and train the DMP with a trajectory and explicit timestamp vector.
+
+        This method trains the DMP from SE3 poses using the provided timestamp vector
+        instead of assuming a fixed dt. Useful when training from trajectories with
+        non-uniform sampling or known timestamps.
+
+        Parameters:
+         - Traj (sm.SE3): Trajectory as an SE3 object.
+         - ts (np.ndarray): Timestamp vector for trajectory points.
+        """
+        positions = np.array([pose.t for pose in Traj])
+        quaternions = np.array([smb.r2q(pose.R) for pose in Traj])
+
+        for i in range(1, len(quaternions)):
+            quaternions[i] = (
+                -quaternions[i]
+                if np.dot(quaternions[i][1:], quaternions[i - 1][1:]) < 0
+                else quaternions[i]
+            )
+
+        self.ts = ts
+        self.tau = ts[-1] if len(ts) > 0 else 1.0
+        self.dt = np.mean(np.gradient(ts)) if len(ts) > 1 else None
+        print(positions.shape, quaternions.shape, self.ts.shape)
+        self.train(positions, quaternions, self.ts, self.tau)
+        self.reset()
+
     def is_trained(self) -> bool:
         return self.trained
         # if self.dt is None and self.tau is None and self.ts is None:
