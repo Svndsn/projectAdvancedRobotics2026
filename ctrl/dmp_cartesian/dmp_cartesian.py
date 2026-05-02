@@ -7,6 +7,7 @@ import spatialmath.base as smb
 from ctrl.dmp_cartesian.canonical_system import CanonicalSystem
 from ctrl.dmp_position import DMPPosition
 from ctrl.dmp_quaternion import DMPQuaternion
+import quaternion
 
 
 class DMPCartesian:
@@ -186,3 +187,21 @@ class DMPCartesian:
         #     return False
         # else:
         #     return True
+
+    def set_start_goal(self, start: sm.SE3, goal: sm.SE3) -> None:
+        """
+        Set a new start and goal pose for the trained DMPs.
+
+        This updates both the position and orientation DMPs so the learned
+        forcing terms can be reused with different start/goal SE3 poses.
+        """
+        # positions
+        self.position_dmp.p0 = np.array(start.t)
+        self.position_dmp.gp = np.array(goal.t)
+
+        # orientations: convert rotation matrices to quaternion scalar-first
+        q0_arr = smb.r2q(start.R)
+        go_arr = smb.r2q(goal.R)
+        # quaternion.quaternion(w, x, y, z)
+        self.quaternion_dmp.q0 = quaternion.quaternion(q0_arr[0], q0_arr[1], q0_arr[2], q0_arr[3])
+        self.quaternion_dmp.go = quaternion.quaternion(go_arr[0], go_arr[1], go_arr[2], go_arr[3])

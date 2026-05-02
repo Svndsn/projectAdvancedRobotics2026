@@ -20,4 +20,6 @@ dependencies = [
     "spatialmath-python==1.1.9",
     "tensorboard==2.14.0",
     "torch==2.3.0",
+    "ur-rtde>=1.6.3",
+    "transform3d>=0.0.4",
 ]

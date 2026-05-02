@@ -297,14 +297,21 @@ class DMPQuaternion:
         """
         Update parameters when the goal quaternion is changed.
         """
-        self._sg = (
-            np.log(self._go_train * self._q0_train.conjugate()).norm()
-            / np.log(self._go * self._q0.conjugate()).norm()
-        )
+        log_q_new = np.log(self._go * self._q0.conjugate())
+        log_q_train = np.log(self._go_train * self._q0_train.conjugate())
 
-        v_new = (2 * np.log(self._go * self._q0.conjugate())).vec
-        v_train = (2 * np.log(self._go_train * self._q0_train.conjugate())).vec
-        self._R_fx = calculate_rotation_between_vectors(v_train, v_new)
+        if log_q_new.norm() < 1e-6:
+            self._sg = 1.0
+        else:
+            self._sg = log_q_train.norm() / log_q_new.norm()
+
+        v_new = (2 * log_q_new).vec
+        v_train = (2 * log_q_train).vec
+
+        if np.linalg.norm(v_new) < 1e-6 or np.linalg.norm(v_train) < 1e-6:
+            self._R_fx = np.eye(3)
+        else:
+            self._R_fx = calculate_rotation_between_vectors(v_train, v_new)
 
     @property
     def go(self) -> quaternion.quaternion:
