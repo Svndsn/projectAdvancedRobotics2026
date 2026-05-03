@@ -15,6 +15,10 @@ AREA_THRESHOLD_RATIO = 0.20
 
 AXIS_DRAW_LENGTH_PX = 350
 
+PIXELS_PER_MM = 5.0   # calibrate this
+KEY_LENGTH_MM = 130.0
+TIP_DIRECTION_SIGN = -1   # change to -1 if it goes wrong way
+
 
 @dataclass
 class ComponentFeatures:
@@ -354,24 +358,34 @@ def draw_text(vis, text, pos, color=(255, 255, 255), scale=0.5, thickness=1):
     )
 
 
-# --- everything above stays EXACTLY the same ---
-
-
 def draw_simple_prediction_window(short_component, long_component, estimated_point):
-    canvas = np.zeros((640, 640, 3), dtype=np.uint8)
+    canvas = np.zeros((1200, 1200, 3), dtype=np.uint8)
 
     short_center = tuple(np.round(short_component.center).astype(int))
     long_center = tuple(np.round(long_component.center).astype(int))
     estimated = tuple(np.round(estimated_point).astype(int))
 
+    # blue/long component major PCA axis
+    long_axis = long_component.eigenvectors[:, 0]
+    long_axis = long_axis / np.linalg.norm(long_axis)
+
+    length_px = KEY_LENGTH_MM * PIXELS_PER_MM
+
+    estimated_tip_point = estimated_point + TIP_DIRECTION_SIGN * length_px * long_axis
+    estimated_tip = tuple(np.round(estimated_tip_point).astype(int))
+
     # draw points
-    cv2.circle(canvas, short_center, 10, (0, 0, 255), -1)   # red
-    cv2.circle(canvas, long_center, 10, (255, 0, 0), -1)    # blue
-    cv2.circle(canvas, estimated, 10, (0, 255, 255), -1)    # yellow
+    cv2.circle(canvas, short_center, 10, (0, 0, 255), -1)       # red
+    cv2.circle(canvas, long_center, 10, (255, 0, 0), -1)        # blue
+    cv2.circle(canvas, estimated, 10, (0, 255, 255), -1)        # yellow
+    cv2.circle(canvas, estimated_tip, 10, (0, 255, 0), -1)      # green tip
 
     # draw simple connections
     cv2.line(canvas, short_center, estimated, (0, 0, 255), 2)
     cv2.line(canvas, long_center, estimated, (255, 0, 0), 2)
+
+    # estimated 130 mm shaft line
+    cv2.line(canvas, estimated, estimated_tip, (0, 255, 0), 2)
 
     # labels
     cv2.putText(canvas, "short", (short_center[0] + 10, short_center[1]),
@@ -382,6 +396,9 @@ def draw_simple_prediction_window(short_component, long_component, estimated_poi
 
     cv2.putText(canvas, "est", (estimated[0] + 10, estimated[1]),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+
+    cv2.putText(canvas, "tip 130mm", (estimated_tip[0] + 10, estimated_tip[1]),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     return canvas
 
