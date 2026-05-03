@@ -7,7 +7,7 @@ CAMERA_INDEX = 2
 FRAME_SIZE = (640, 640)
 
 DIFF_THRESHOLD = 10
-MIN_AREA_PIXELS = 15
+MIN_AREA_PIXELS = 10
 
 CENTER_THRESHOLD_PX = 5.0
 ANGLE_THRESHOLD_DEG = 5.0
@@ -359,35 +359,54 @@ def draw_text(vis, text, pos, color=(255, 255, 255), scale=0.5, thickness=1):
 
 
 def draw_simple_prediction_window(short_component, long_component, estimated_point):
-    canvas = np.zeros((1200, 1200, 3), dtype=np.uint8)
+    canvas = np.zeros((640, 1250, 3), dtype=np.uint8)
 
-    short_center = tuple(np.round(short_component.center).astype(int))
-    long_center = tuple(np.round(long_component.center).astype(int))
-    estimated = tuple(np.round(estimated_point).astype(int))
+    short_pt = short_component.center
+    long_pt = long_component.center
+    est_pt = estimated_point
 
-    # blue/long component major PCA axis
+    short_center = tuple(np.round(short_pt).astype(int))
+    long_center = tuple(np.round(long_pt).astype(int))
+    estimated = tuple(np.round(est_pt).astype(int))
+
+    # --- BLUE AXIS (for green point) ---
     long_axis = long_component.eigenvectors[:, 0]
     long_axis = long_axis / np.linalg.norm(long_axis)
 
     length_px = KEY_LENGTH_MM * PIXELS_PER_MM
-
-    estimated_tip_point = estimated_point + TIP_DIRECTION_SIGN * length_px * long_axis
+    estimated_tip_point = est_pt + TIP_DIRECTION_SIGN * length_px * long_axis
     estimated_tip = tuple(np.round(estimated_tip_point).astype(int))
 
-    # draw points
+    # --- CREATE RECTANGLE AROUND RED/BLUE/YELLOW ---
+    pts = np.array([short_pt, long_pt, est_pt])
+
+    min_xy = pts.min(axis=0)
+    max_xy = pts.max(axis=0)
+
+    margin = 30  # pixels padding
+
+    top_left = (int(min_xy[0] - margin), int(min_xy[1] - margin))
+    bottom_right = (int(max_xy[0] + margin), int(max_xy[1] + margin))
+
+    # draw rectangle (what "sensor sees")
+    cv2.rectangle(canvas, top_left, bottom_right, (200, 200, 200), 2)
+
+    # label
+    cv2.putText(canvas, "visible region", (top_left[0], top_left[1] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+    # --- DRAW POINTS ---
     cv2.circle(canvas, short_center, 10, (0, 0, 255), -1)       # red
     cv2.circle(canvas, long_center, 10, (255, 0, 0), -1)        # blue
     cv2.circle(canvas, estimated, 10, (0, 255, 255), -1)        # yellow
-    cv2.circle(canvas, estimated_tip, 10, (0, 255, 0), -1)      # green tip
+    cv2.circle(canvas, estimated_tip, 10, (0, 255, 0), -1)      # green
 
-    # draw simple connections
+    # --- CONNECTIONS ---
     cv2.line(canvas, short_center, estimated, (0, 0, 255), 2)
     cv2.line(canvas, long_center, estimated, (255, 0, 0), 2)
-
-    # estimated 130 mm shaft line
     cv2.line(canvas, estimated, estimated_tip, (0, 255, 0), 2)
 
-    # labels
+    # --- LABELS ---
     cv2.putText(canvas, "short", (short_center[0] + 10, short_center[1]),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
@@ -397,7 +416,7 @@ def draw_simple_prediction_window(short_component, long_component, estimated_poi
     cv2.putText(canvas, "est", (estimated[0] + 10, estimated[1]),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
-    cv2.putText(canvas, "tip 130mm", (estimated_tip[0] + 10, estimated_tip[1]),
+    cv2.putText(canvas, "tip", (estimated_tip[0] + 10, estimated_tip[1]),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     return canvas
