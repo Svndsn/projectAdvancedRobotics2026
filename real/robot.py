@@ -39,23 +39,61 @@ class Robot:
         # self.T_tcp_gripper_tcp = sm.SE3.Tz(0.18) if self.has_gripper else sm.SE3()
 
         self.ctrl.setTcp([0] * 6)
+        self._ensure_control_ready()
+
+    def _ensure_control_ready(self) -> None:
+        """Raise a clear error when RTDE control is not ready for motion."""
+        is_connected = getattr(self.ctrl, "isConnected", None)
+        if callable(is_connected) and not is_connected():
+            raise RuntimeError(
+                f"Unable to connect to UR RTDE control at {self.ctrl}. "
+                "Check the robot IP and network connectivity."
+            )
+
+        is_program_running = getattr(self.ctrl, "isProgramRunning", None)
+        if callable(is_program_running) and not is_program_running():
+            raise RuntimeError(
+                "UR RTDE control script is not running. "
+                "Start the robot program in Remote Control mode before executing motions."
+            )
+
+    def _is_program_running(self) -> Optional[bool]:
+        is_program_running = getattr(self.ctrl, "isProgramRunning", None)
+        if callable(is_program_running):
+            return bool(is_program_running())
+        return None
+
+    @staticmethod
+    def _raise_motion_failure(name: str) -> None:
+        raise RuntimeError(
+            f"{name} failed. The UR controller rejected the command; "
+            "verify Remote Control mode and that the RTDE control script is running."
+        )
 
 
     def moveL(self, pose: sm.SE3, speed: int = _DEFAULT_L_SPEED, acc: int =_DEFAULT_L_ACC):
+        self._ensure_control_ready()
         pose = pose @ self.T_tcp_gripper_tcp.inv()
         T = se3_to_pose(pose)
-        assert self.ctrl.moveL(T, speed, acc)
+        if not self.ctrl.moveL(T, speed, acc):
+            self._raise_motion_failure("moveL")
 
     def moveJ(self, q: Union[list, np.ndarray], speed: int = _DEFAULT_J_SPEED, acc: int = _DEFAULT_J_ACC):
-        assert self.ctrl.moveJ(q, speed, acc)
+        self._ensure_control_ready()
+        if not self.ctrl.moveJ(q, speed, acc):
+            self._raise_motion_failure("moveJ")
 
     def moveJ_IK(self, pose: sm.SE3, speed: int = _DEFAULT_J_SPEED, acc: int = _DEFAULT_J_ACC):
+        self._ensure_control_ready()
         pose = pose @ self.T_tcp_gripper_tcp.inv()
         T = se3_to_pose(pose)
-        assert self.ctrl.moveJ_IK(T, speed, acc)
+        if not self.ctrl.moveJ_IK(T, speed, acc):
+            self._raise_motion_failure("moveJ_IK")
 
     def servoJ(self, q: np.ndarray, speed: int = _DEFAULT_J_SPEED, acc: int = _DEFAULT_J_ACC) -> None:
-        assert self.ctrl.servoJ(q, speed, acc)
+        self._ensure_control_ready()
+        if not self.ctrl.servoJ(q, speed, acc):
+            self._raise_motion_failure("servoJ")
 
     def servoL(
         self,
@@ -66,15 +104,21 @@ class Robot:
         lookahead_time: float = 0.1,
         gain: int = 300,
     ) -> None:
+        self._ensure_control_ready()
         pose = pose @ self.T_tcp_gripper_tcp.inv()
         T = se3_to_pose(pose)
-        assert self.ctrl.servoL(T.tolist(), speed, acc, dt, lookahead_time, gain)
+        if not self.ctrl.servoL(T.tolist(), speed, acc, dt, lookahead_time, gain):
+            self._raise_motion_failure("servoL")
         # assert self.ctrl.servoL(T, speed, acc)
 
     def servo_stop(self) -> None:
+        if self._is_program_running() is False:
+            return
         self.ctrl.servoStop()
 
     def stop_script(self) -> None:
+        if self._is_program_running() is False:
+            return
         self.ctrl.stopScript()
 
     @property

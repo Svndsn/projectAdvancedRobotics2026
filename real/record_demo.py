@@ -3,9 +3,18 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+import sys
 
 import pandas as pd
-from rtde_receive import RTDEReceiveInterface
+
+if __package__ in (None, ""):
+    _REPO_ROOT = Path(__file__).resolve().parents[1]
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+
+from real.config import T_TCP_GRIPPER_TCP
+from real.robot_state import RobotState
+from real.utils import se3_to_pose
 
 
 def _parse_args() -> argparse.Namespace:
@@ -52,10 +61,14 @@ def main() -> None:
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    recv = RTDEReceiveInterface(args.robot_ip)
+    robot = RobotState(robot_ip=args.robot_ip, T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP)
 
     dt = 1.0 / args.rate
     rows = []
+
+    def _capture_row(start_time: float) -> list[float]:
+        pose = se3_to_pose(robot.T_base_tcp)
+        return [time.monotonic() - start_time, *pose.tolist()]
 
     if args.manual or args.duration <= 0:
         input("Press Enter to start recording...")
@@ -67,12 +80,11 @@ def main() -> None:
             stop_event.set()
 
         threading.Thread(target=_wait_for_stop, daemon=True).start()
-        t0 = time.time()
+        t0 = time.monotonic()
         while not stop_event.is_set():
-            pose = recv.getActualTCPPose()  # [x, y, z, rx, ry, rz]
-            rows.append(pose)
+            rows.append(_capture_row(t0))
             time.sleep(dt)
-        elapsed = time.time() - t0
+        elapsed = time.monotonic() - t0
         print(f"Stopped. Recorded {len(rows)} samples in {elapsed:.2f}s.")
     else:
         n_samples = max(1, int(args.duration * args.rate))
@@ -80,15 +92,14 @@ def main() -> None:
             f"Recording {n_samples} samples at {args.rate:.1f} Hz to {out_path}.\n"
             "Move the robot in freedrive/teach mode now."
         )
-        t0 = time.time()
+        t0 = time.monotonic()
         for _ in range(n_samples):
-            pose = recv.getActualTCPPose()  # [x, y, z, rx, ry, rz]
-            rows.append(pose)
+            rows.append(_capture_row(t0))
             time.sleep(dt)
-        elapsed = time.time() - t0
+        elapsed = time.monotonic() - t0
         print(f"Done. Recorded {len(rows)} samples in {elapsed:.2f}s.")
 
-    columns = [f"actual_TCP_pose_{i}" for i in range(6)]
+    columns = ["t", *[f"actual_TCP_pose_{i}" for i in range(6)]]
     df = pd.DataFrame(rows, columns=columns)
     df.to_csv(out_path, index=False)
     print(f"Saved: {out_path}")
