@@ -41,6 +41,14 @@ class Robot:
         self.ctrl.setTcp([0] * 6)
         self._ensure_control_ready()
 
+    def set_tool_tcp(self, T_tcp_gripper_tcp: sm.SE3) -> None:
+        if not isinstance(T_tcp_gripper_tcp, sm.SE3):
+            raise TypeError("T_tcp_gripper_tcp must be spatialmath.SE3.")
+        if not np.all(np.isfinite(T_tcp_gripper_tcp.A)):
+            raise ValueError("T_tcp_gripper_tcp contains non-finite values.")
+        self.T_tcp_gripper_tcp = T_tcp_gripper_tcp
+        self.has_gripper = not np.allclose(self.T_tcp_gripper_tcp.A, sm.SE3().A)
+
     def _ensure_control_ready(self) -> None:
         """Raise a clear error when RTDE control is not ready for motion."""
         is_connected = getattr(self.ctrl, "isConnected", None)

@@ -20,8 +20,12 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_REPO_ROOT))
 
 from ctrl.dmp_cartesian.dmp_cartesian import DMPCartesian
-from real.config import ROBOT_IP, T_TCP_GRIPPER_TCP
+from real.config import ROBOT_IP, T_TCP_GRASPED_TOOL_TCP, T_TCP_GRIPPER_TCP
 from real.robot import Robot
+from real.slip_correction import (
+    load_correction_provider,
+    validate_and_clip_correction,
+)
 from real.wsg50_gripper import WSG50CommandError, WSG50Gripper
 from real.config import (
     WSG50_CLOSE_WIDTH_MM,
@@ -131,6 +135,13 @@ def _parse_pose_str(s: str) -> sm.SE3:
     return sm.SE3.Rt(rotation, position, check=False)
 
 
+def _format_pose6(pose: sm.SE3) -> str:
+    t = pose.t
+    angle, axis = pose.angvec()
+    rotvec = np.array(axis, dtype=float) * float(angle)
+    return ",".join(f"{v:.6f}" for v in [t[0], t[1], t[2], rotvec[0], rotvec[1], rotvec[2]])
+
+
 def _load_pose_from_csv(csv_path: str | Path, row_index: int) -> sm.SE3:
     df = pd.read_csv(csv_path)
     prefix = _detect_pose_prefix(df)
@@ -207,6 +218,22 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Task goal pose: file path (last row) or CSV 'x,y,z,rx,ry,rz'.",
     )
+    parser.add_argument(
+        "--grasped-tool-tcp",
+        type=str,
+        default=None,
+        help="Flange->TCP transform to apply after gripping the tool: file path (first row) or CSV 'x,y,z,rx,ry,rz'.",
+    )
+    parser.add_argument(
+        "--correction-provider",
+        type=str,
+        default=None,
+        help="Optional slip correction provider in 'module:ClassName' format. Output is interpreted as TCP delta.",
+    )
+    parser.add_argument("--max-translation-correction-m", type=float, default=0.01)
+    parser.add_argument("--max-rotation-correction-rad", type=float, default=0.1)
+    parser.add_argument("--max-tcp-drift-translation-m", type=float, default=0.03)
+    parser.add_argument("--max-tcp-drift-rotation-rad", type=float, default=0.35)
     parser.add_argument("--max-phase-jump-m", type=float, default=0.02)
     parser.add_argument("--max-phase-jump-rad", type=float, default=0.35)
     parser.add_argument("--speed", type=float, default=0.05)
@@ -261,6 +288,13 @@ class ToolTaskExecutor:
         self.approach_poses: list[sm.SE3] = []
         self.task1_poses: list[sm.SE3] = []
         self.task2_poses: list[sm.SE3] = []
+        self.pregrasp_tcp: sm.SE3 = T_TCP_GRIPPER_TCP
+        self.grasped_tool_tcp: sm.SE3 = _resolve_pose(
+            args.grasped_tool_tcp, T_TCP_GRASPED_TOOL_TCP, row_index=0
+        )
+        self.active_tcp: sm.SE3 = self.pregrasp_tcp
+        self.correction_provider = load_correction_provider(args.correction_provider)
+        self._t0 = time.monotonic()
         self.robot: Optional[Robot] = None
         self.gripper: Optional[WSG50Gripper] = None
 
@@ -443,7 +477,8 @@ class ToolTaskExecutor:
         print(f"  Task1 tau scale:    {self.task1_tau_scale:.2f}x")
         print(f"  Task2 tau scale:    {self.task2_tau_scale:.2f}x")
         print(f"  Dry-run mode:       {self.args.dry_run}")
-        print(f"  TCP transform:      {T_TCP_GRIPPER_TCP}")
+        print(f"  Pre-grasp TCP:      {self.pregrasp_tcp}")
+        print(f"  Grasped tool TCP:   {self.grasped_tool_tcp}")
 
         print("\nCalibration Checklist:")
         print("  1) Measure flange->tool TCP and set T_TCP_GRIPPER_TCP in real/config.py")
@@ -479,7 +514,8 @@ class ToolTaskExecutor:
 
     def _connect_robot(self) -> None:
         _logger.info("Connecting to robot at %s", self.args.robot_ip)
-        self.robot = Robot(robot_ip=self.args.robot_ip, T_tcp_gripper_tcp=T_TCP_GRIPPER_TCP)
+        self.robot = Robot(robot_ip=self.args.robot_ip, T_tcp_gripper_tcp=self.pregrasp_tcp)
+        self.active_tcp = self.pregrasp_tcp
         self.gripper = WSG50Gripper(
             host=WSG50_IP,
             port=WSG50_PORT,
@@ -513,11 +549,67 @@ class ToolTaskExecutor:
         self.robot.servo_stop()
         time.sleep(0.05)
 
-    def _servo_phase(self, phase: str, poses: list[sm.SE3]) -> None:
+    def _update_active_tcp(self, new_tcp: sm.SE3, reason: str) -> None:
+        if self.robot is None:
+            return
+        self.robot.set_tool_tcp(new_tcp)
+        self.active_tcp = new_tcp
+        _logger.info("Active TCP updated (%s): %s", reason, _format_pose6(new_tcp))
+
+    def _reanchor_task_rollouts_from_current_pose(self) -> None:
+        if self.robot is None:
+            return
+        current_pose = self.robot.T_base_tcp
+        self.task1_dmp.set_start_goal(current_pose, self.task_mid_pose)
+        self.task2_dmp.set_start_goal(self.task_mid_pose, self.task_goal_pose)
+        self.task1_poses = rollout_dmp(self.task1_dmp, self.task1_tau_scale)
+        self.task2_poses = rollout_dmp(self.task2_dmp, self.task2_tau_scale)
+        if not _all_poses_valid(self.task1_poses):
+            _logger.warning("Task1 rollout invalid after re-anchor; using raw task1 demo poses.")
+            self.task1_poses = list(self.task1_demo_poses)
+        if not _all_poses_valid(self.task2_poses):
+            _logger.warning("Task2 rollout invalid after re-anchor; using raw task2 demo poses.")
+            self.task2_poses = list(self.task2_demo_poses)
+
+    def _apply_slip_tcp_update(self, target_pose: sm.SE3, phase: str) -> None:
+        if self.robot is None:
+            return
+        now = time.monotonic() - self._t0
+        actual_pose = self.robot.T_base_tcp
+        raw_delta = self.correction_provider.get_correction(
+            actual_pose=actual_pose,
+            target_pose=target_pose,
+            phase=phase,
+            t=now,
+        )
+        delta = validate_and_clip_correction(
+            raw_delta,
+            self.args.max_translation_correction_m,
+            self.args.max_rotation_correction_rad,
+        )
+        candidate_tcp = self.active_tcp @ delta
+        drift = self.grasped_tool_tcp.inv() @ candidate_tcp
+        drift_m = float(np.linalg.norm(drift.t))
+        drift_rad, _ = drift.angvec()
+        drift_rad = abs(float(drift_rad))
+        if drift_m > self.args.max_tcp_drift_translation_m or drift_rad > self.args.max_tcp_drift_rotation_rad:
+            _logger.warning(
+                "Skipping TCP update due to drift bounds: %.4fm/%.4frad exceeds %.4fm/%.4frad",
+                drift_m,
+                drift_rad,
+                self.args.max_tcp_drift_translation_m,
+                self.args.max_tcp_drift_rotation_rad,
+            )
+            return
+        self._update_active_tcp(candidate_tcp, reason=f"slip:{phase}")
+
+    def _servo_phase(self, phase: str, poses: list[sm.SE3], apply_tcp_correction: bool = False) -> None:
         assert self.robot is not None
         _logger.info("Executing %s (%d waypoints)", phase, len(poses))
         progress_every = max(1, len(poses) // 10)
         for i, pose in enumerate(poses):
+            if apply_tcp_correction:
+                self._apply_slip_tcp_update(pose, phase)
             self.robot.servoL(pose, speed=self.args.speed, acc=self.args.acc, dt=self.servo_dt)
             if (i + 1) % progress_every == 0 or i + 1 == len(poses):
                 _logger.info("  %s progress: %d/%d", phase, i + 1, len(poses))
@@ -557,8 +649,16 @@ class ToolTaskExecutor:
             lines = self.gripper.move(WSG50_CLOSE_WIDTH_MM, WSG50_GRIP_SPEED_MM_S)
             _logger.info("WSG50 fallback MOVE response: %s", " | ".join(lines))
 
+    def _switch_to_grasped_tcp(self) -> None:
+        if self.robot is None:
+            return
+        self._update_active_tcp(self.grasped_tool_tcp, reason="tool_grasped")
+        self._reanchor_task_rollouts_from_current_pose()
+
     def execute(self) -> None:
         try:
+            self.correction_provider.reset()
+            self._t0 = time.monotonic()
             self._setup_rollouts()
             if not self._safety_check():
                 raise RuntimeError("Safety check failed")
@@ -578,13 +678,14 @@ class ToolTaskExecutor:
             self._finish_servo_segment()
 
             self._grip_object()
+            self._switch_to_grasped_tcp()
 
             self._move_to_pose(self.task1_poses[0])
-            self._servo_phase("task1", self.task1_poses)
+            self._servo_phase("task1", self.task1_poses, apply_tcp_correction=True)
             self._finish_servo_segment()
 
             self._move_to_pose(self.task2_poses[0])
-            self._servo_phase("task2", self.task2_poses)
+            self._servo_phase("task2", self.task2_poses, apply_tcp_correction=True)
             self._finish_servo_segment()
 
             if self.robot is not None:
