@@ -33,6 +33,13 @@ class NoSlipCorrection:
         return sm.SE3()
 
 
+def compensate_tool_slip(
+    target_tool_pose: sm.SE3,
+    T_gripper_tool_slip: sm.SE3,
+) -> sm.SE3:
+    return target_tool_pose @ T_gripper_tool_slip.inv()
+
+
 def load_correction_provider(spec: str | None) -> SlipCorrectionProvider:
     if not spec:
         return NoSlipCorrection()

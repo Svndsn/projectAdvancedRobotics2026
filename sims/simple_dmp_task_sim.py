@@ -34,6 +34,7 @@ from real.config import (
     WSG50_RELEASE_DISTANCE_MM,
 )
 from real.slip_correction import (
+    compensate_tool_slip,
     load_correction_provider,
     validate_and_clip_correction,
 )
@@ -316,21 +317,21 @@ class SimDMPExecutor(BaseSim):
         now = time.monotonic() - self._t0
         actual_pose = self.robot.T_base_tcp
         if apply_correction:
-            raw_correction = self.correction_provider.get_correction(
+            raw_tool_slip_tf = self.correction_provider.get_correction(
                 actual_pose=actual_pose,
                 target_pose=target_pose,
                 phase=phase,
                 t=now,
             )
-            correction = validate_and_clip_correction(
-                raw_correction,
+            tool_slip_tf = validate_and_clip_correction(
+                raw_tool_slip_tf,
                 self.args.max_translation_correction_m,
                 self.args.max_rotation_correction_rad,
             )
-            raw_translation_norm = float(np.linalg.norm(raw_correction.t))
-            clipped_translation_norm = float(np.linalg.norm(correction.t))
-            raw_angle, _ = raw_correction.angvec()
-            clipped_angle, _ = correction.angvec()
+            raw_translation_norm = float(np.linalg.norm(raw_tool_slip_tf.t))
+            clipped_translation_norm = float(np.linalg.norm(tool_slip_tf.t))
+            raw_angle, _ = raw_tool_slip_tf.angvec()
+            clipped_angle, _ = tool_slip_tf.angvec()
             if (
                 abs(raw_translation_norm - clipped_translation_norm) > 1e-9
                 or abs(float(raw_angle) - float(clipped_angle)) > 1e-9
@@ -343,30 +344,44 @@ class SimDMPExecutor(BaseSim):
                     float(clipped_angle),
                 )
         else:
-            correction = sm.SE3()
+            tool_slip_tf = sm.SE3()
 
-        command_pose = correction @ target_pose
+        # T_base_tool_desired = target_pose
+        # T_gripper_tool_slip = tool_slip_tf
+        # T_base_gripper_command = T_base_tool_desired @ T_gripper_tool_slip.inv()
+        command_pose = compensate_tool_slip(target_pose, tool_slip_tf)
         self.robot.set_tcp_target(command_pose)
         actual_pose = self.robot.T_base_tcp
 
-        self._log_step(phase, target_pose, command_pose, actual_pose, correction)
+        self._log_step(
+            phase,
+            target_tool_pose=target_pose,
+            commanded_gripper_pose=command_pose,
+            actual_gripper_or_tool_pose=actual_pose,
+            tool_slip_tf=tool_slip_tf,
+        )
 
     def _log_step(
         self,
         phase: str,
-        target_pose: sm.SE3,
-        command_pose: sm.SE3,
-        actual_pose: sm.SE3,
-        correction: sm.SE3,
+        target_tool_pose: sm.SE3,
+        commanded_gripper_pose: sm.SE3,
+        actual_gripper_or_tool_pose: sm.SE3,
+        tool_slip_tf: sm.SE3,
     ) -> None:
         self.rows.append(
             [
                 time.monotonic() - self._t0,
                 phase,
-                *se3_to_pose(target_pose).tolist(),
-                *se3_to_pose(command_pose).tolist(),
-                *se3_to_pose(actual_pose).tolist(),
-                *se3_to_pose(correction).tolist(),
+                *se3_to_pose(target_tool_pose).tolist(),
+                *se3_to_pose(commanded_gripper_pose).tolist(),
+                *se3_to_pose(actual_gripper_or_tool_pose).tolist(),
+                *se3_to_pose(tool_slip_tf).tolist(),
+                *se3_to_pose(target_tool_pose).tolist(),
+                *se3_to_pose(commanded_gripper_pose).tolist(),
+                *se3_to_pose(actual_gripper_or_tool_pose).tolist(),
+                *se3_to_pose(tool_slip_tf).tolist(),
+                "target_pose @ tool_slip_transform.inv()",
                 self._gripper_state(phase),
                 True,  # dry_run is always true in sim
             ]
@@ -389,6 +404,11 @@ class SimDMPExecutor(BaseSim):
             *[f"corrected_target_TCP_pose_{i}" for i in range(6)],
             *[f"actual_TCP_pose_{i}" for i in range(6)],
             *[f"correction_TCP_pose_{i}" for i in range(6)],
+            *[f"dmp_target_tool_pose_{i}" for i in range(6)],
+            *[f"commanded_gripper_tcp_pose_{i}" for i in range(6)],
+            *[f"actual_gripper_or_tool_pose_{i}" for i in range(6)],
+            *[f"tool_slip_transform_{i}" for i in range(6)],
+            "commanded_pose_semantics",
             "gripper_state",
             "dry_run",
         ]
