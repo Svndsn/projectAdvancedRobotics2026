@@ -32,6 +32,7 @@ from real.config import (
     WSG50_RELEASE_DISTANCE_MM,
 )
 from real.slip_correction import (
+    compensate_tool_slip,
     load_correction_provider,
     validate_and_clip_correction,
 )
@@ -590,7 +591,7 @@ class RealApproachGraspTaskDMPExecutor:
         # T_base_tool_desired = target_pose
         # T_gripper_tool_slip = tool_slip_tf
         # T_base_gripper_command = T_base_tool_desired @ T_gripper_tool_slip.inv()
-        command_pose = target_pose @ tool_slip_tf.inv()
+        command_pose = compensate_tool_slip(target_pose, tool_slip_tf)
         if self.robot is not None:
             self.robot.servoL(
                 command_pose,
