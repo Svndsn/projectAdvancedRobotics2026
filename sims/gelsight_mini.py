@@ -37,9 +37,33 @@ class MjSim(BaseSim):
         gs1 = mjcf.from_path(_XML_GS_MINI)
 
         scene.attach(gs1)
+        # probe = scene.worldbody.add("body", name="press_probe")
+        # probe.add("freejoint", name="press_probe_joint")
+        # probe.add(
+        #     "geom",
+        #     name="press_probe_geom",
+        #     type="box",
+        #     size="0.002 0.001 0.001",
+        #     rgba="0.8 0.1 0.1 1.0",
+        # )
         probe = scene.worldbody.add("body", name="press_probe")
         probe.add("freejoint", name="press_probe_joint")
-        probe.add("geom", name="press_probe", type="sphere", size="0.006", rgba="0.85 0.2 0.2 1")
+
+        # register the STL as a mesh asset
+        scene.asset.add(
+            "mesh",
+            name="unbrako_mesh",
+            file=str(_HERE / "./assets/unbrako/assets/unbrako.stl"),
+            scale="0.001 0.001 0.001",   # adjust this!
+        )
+
+        probe.add(
+            "geom",
+            name="press_probe_geom",
+            type="mesh",
+            mesh="unbrako_mesh",
+            rgba="0.8 0.1 0.1 1.0",
+        )
         press_sensor = scene.sensor.add(
             "plugin",
             name="gelsight_touch",
@@ -64,7 +88,7 @@ class MjSim(BaseSim):
         mj.mj_step(m, d)
 
         press_site_pos = d.site("gelsight_mini/gelsight_mini_press_site").xpos.copy()
-        d.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, 0.02]), [1.0, 0.0, 0.0, 0.0]]
+        d.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, 0.112]), [1.0, 0.0, 0.0, 0.0]]
         mj.mj_forward(m, d)
 
         return m, d
@@ -72,7 +96,7 @@ class MjSim(BaseSim):
     def set_probe_pressed(self, pressed: bool) -> None:
         press_site_pos = self.data.site("gelsight_mini/gelsight_mini_press_site").xpos.copy()
         z_offset = 0.006 if pressed else 0.02
-        self.data.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.0, 0.0, z_offset]), [1.0, 0.0, 0.0, 0.0]]
+        self.data.joint("press_probe_joint").qpos[:] = np.r_[press_site_pos + np.array([0.095, 0.0035, z_offset]), [1.0, 0.0, 0.0, 0.5]]
         mj.mj_forward(self.model, self.data)
         self._probe_pressed = pressed
 
