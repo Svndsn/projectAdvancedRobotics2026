@@ -737,7 +737,7 @@ def main() -> None:
                         (
                             f"Calib x={sample.calibrated_x_m:.4f}m "
                             f"y={sample.calibrated_y_m:.4f}m "
-                            f"rz={sample.calibrated_rotation_rad:.4f}rad moved={sample.moved}"
+                            f"pitch={sample.calibrated_rotation_rad:.4f}rad moved={sample.moved}"
                         ),
                         (10, 125),
                         (0, 255, 255),
