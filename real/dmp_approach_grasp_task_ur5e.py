@@ -558,21 +558,21 @@ class RealApproachGraspTaskDMPExecutor:
         now = time.monotonic() - self._t0
         actual_pose = self._actual_pose(default=target_pose)
         if apply_correction:
-            raw_correction = self.correction_provider.get_correction(
+            raw_tool_slip_tf = self.correction_provider.get_correction(
                 actual_pose=actual_pose,
                 target_pose=target_pose,
                 phase=phase,
                 t=now,
             )
-            correction = validate_and_clip_correction(
-                raw_correction,
+            tool_slip_tf = validate_and_clip_correction(
+                raw_tool_slip_tf,
                 self.args.max_translation_correction_m,
                 self.args.max_rotation_correction_rad,
             )
-            raw_translation_norm = float(np.linalg.norm(raw_correction.t))
-            clipped_translation_norm = float(np.linalg.norm(correction.t))
-            raw_angle, _ = raw_correction.angvec()
-            clipped_angle, _ = correction.angvec()
+            raw_translation_norm = float(np.linalg.norm(raw_tool_slip_tf.t))
+            clipped_translation_norm = float(np.linalg.norm(tool_slip_tf.t))
+            raw_angle, _ = raw_tool_slip_tf.angvec()
+            clipped_angle, _ = tool_slip_tf.angvec()
             if (
                 abs(raw_translation_norm - clipped_translation_norm) > 1e-9
                 or abs(float(raw_angle) - float(clipped_angle)) > 1e-9
@@ -585,9 +585,12 @@ class RealApproachGraspTaskDMPExecutor:
                     float(clipped_angle),
                 )
         else:
-            correction = sm.SE3()
+            tool_slip_tf = sm.SE3()
 
-        command_pose = correction @ target_pose
+        # T_base_tool_desired = target_pose
+        # T_gripper_tool_slip = tool_slip_tf
+        # T_base_gripper_command = T_base_tool_desired @ T_gripper_tool_slip.inv()
+        command_pose = target_pose @ tool_slip_tf.inv()
         if self.robot is not None:
             self.robot.servoL(
                 command_pose,
@@ -599,7 +602,7 @@ class RealApproachGraspTaskDMPExecutor:
         else:
             actual_pose = command_pose
 
-        self._log_step(phase, target_pose, command_pose, actual_pose, correction)
+        self._log_step(phase, target_pose, command_pose, actual_pose, tool_slip_tf)
 
         if not self.args.dry_run and self.args.servo_dt > 0:
             time.sleep(self.args.servo_dt)
@@ -615,7 +618,7 @@ class RealApproachGraspTaskDMPExecutor:
         target_pose: sm.SE3,
         command_pose: sm.SE3,
         actual_pose: sm.SE3,
-        correction: sm.SE3,
+        tool_slip_tf: sm.SE3,
     ) -> None:
         self.rows.append(
             [
@@ -624,7 +627,7 @@ class RealApproachGraspTaskDMPExecutor:
                 *se3_to_pose(target_pose).tolist(),
                 *se3_to_pose(command_pose).tolist(),
                 *se3_to_pose(actual_pose).tolist(),
-                *se3_to_pose(correction).tolist(),
+                *se3_to_pose(tool_slip_tf).tolist(),
                 self._gripper_state(phase),
                 self.args.dry_run,
             ]
