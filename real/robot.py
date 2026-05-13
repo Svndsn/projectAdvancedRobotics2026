@@ -36,8 +36,11 @@ class Robot:
         self.T_tcp_gripper_tcp = T_tcp_gripper_tcp if T_tcp_gripper_tcp is not None else sm.SE3()
         self.has_gripper = not np.allclose(self.T_tcp_gripper_tcp.A, sm.SE3().A)
 
-        # self.T_tcp_gripper_tcp = sm.SE3.Tz(0.18) if self.has_gripper else sm.SE3()
-
+        # Keep the UR controller TCP at the flange/zero frame and apply the fixed
+        # calibration in software instead. T_tcp_gripper_tcp is the calibrated
+        # transform from the UR TCP/flange frame to the nominal gripper/tool
+        # frame. Tool slip is handled above this layer as an additional transform,
+        # not by changing the UR controller TCP online during execution.
         self.ctrl.setTcp([0] * 6)
         self._ensure_control_ready()
 

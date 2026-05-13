@@ -23,6 +23,7 @@ from ctrl.dmp_cartesian.dmp_cartesian import DMPCartesian
 from real.config import ROBOT_IP, T_TCP_GRASPED_TOOL_TCP, T_TCP_GRIPPER_TCP
 from real.robot import Robot
 from real.slip_correction import (
+    compensate_tool_slip,
     load_correction_provider,
     validate_and_clip_correction,
 )
@@ -571,9 +572,9 @@ class ToolTaskExecutor:
             _logger.warning("Task2 rollout invalid after re-anchor; using raw task2 demo poses.")
             self.task2_poses = list(self.task2_demo_poses)
 
-    def _apply_slip_tcp_update(self, target_pose: sm.SE3, phase: str) -> None:
+    def _compute_slip_corrected_pose(self, target_pose: sm.SE3, phase: str) -> sm.SE3:
         if self.robot is None:
-            return
+            return target_pose
         now = time.monotonic() - self._t0
         actual_pose = self.robot.T_base_tcp
         raw_delta = self.correction_provider.get_correction(
@@ -587,30 +588,17 @@ class ToolTaskExecutor:
             self.args.max_translation_correction_m,
             self.args.max_rotation_correction_rad,
         )
-        candidate_tcp = self.active_tcp @ delta
-        drift = self.grasped_tool_tcp.inv() @ candidate_tcp
-        drift_m = float(np.linalg.norm(drift.t))
-        drift_rad, _ = drift.angvec()
-        drift_rad = abs(float(drift_rad))
-        if drift_m > self.args.max_tcp_drift_translation_m or drift_rad > self.args.max_tcp_drift_rotation_rad:
-            _logger.warning(
-                "Skipping TCP update due to drift bounds: %.4fm/%.4frad exceeds %.4fm/%.4frad",
-                drift_m,
-                drift_rad,
-                self.args.max_tcp_drift_translation_m,
-                self.args.max_tcp_drift_rotation_rad,
-            )
-            return
-        self._update_active_tcp(candidate_tcp, reason=f"slip:{phase}")
+        return compensate_tool_slip(target_pose, delta)
 
     def _servo_phase(self, phase: str, poses: list[sm.SE3], apply_tcp_correction: bool = False) -> None:
         assert self.robot is not None
         _logger.info("Executing %s (%d waypoints)", phase, len(poses))
         progress_every = max(1, len(poses) // 10)
         for i, pose in enumerate(poses):
+            command_pose = pose
             if apply_tcp_correction:
-                self._apply_slip_tcp_update(pose, phase)
-            self.robot.servoL(pose, speed=self.args.speed, acc=self.args.acc, dt=self.servo_dt)
+                command_pose = self._compute_slip_corrected_pose(pose, phase)
+            self.robot.servoL(command_pose, speed=self.args.speed, acc=self.args.acc, dt=self.servo_dt)
             if (i + 1) % progress_every == 0 or i + 1 == len(poses):
                 _logger.info("  %s progress: %d/%d", phase, i + 1, len(poses))
             if self.servo_dt > 0:
