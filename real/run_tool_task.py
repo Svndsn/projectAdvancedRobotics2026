@@ -20,7 +20,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_REPO_ROOT))
 
 from ctrl.dmp_cartesian.dmp_cartesian import DMPCartesian
-from real.config import ROBOT_IP, T_TCP_GRASPED_TOOL_TCP, T_TCP_GRIPPER_TCP
+from real.config import ROBOT_IP, T_TCP_GRIPPER_TCP
 from real.robot import Robot
 from real.slip_correction import (
     compensate_tool_slip,
@@ -136,13 +136,6 @@ def _parse_pose_str(s: str) -> sm.SE3:
     return sm.SE3.Rt(rotation, position, check=False)
 
 
-def _format_pose6(pose: sm.SE3) -> str:
-    t = pose.t
-    angle, axis = pose.angvec()
-    rotvec = np.array(axis, dtype=float) * float(angle)
-    return ",".join(f"{v:.6f}" for v in [t[0], t[1], t[2], rotvec[0], rotvec[1], rotvec[2]])
-
-
 def _load_pose_from_csv(csv_path: str | Path, row_index: int) -> sm.SE3:
     df = pd.read_csv(csv_path)
     prefix = _detect_pose_prefix(df)
@@ -220,12 +213,6 @@ def _parse_args() -> argparse.Namespace:
         help="Task goal pose: file path (last row) or CSV 'x,y,z,rx,ry,rz'.",
     )
     parser.add_argument(
-        "--grasped-tool-tcp",
-        type=str,
-        default=None,
-        help="Flange->TCP transform to apply after gripping the tool: file path (first row) or CSV 'x,y,z,rx,ry,rz'.",
-    )
-    parser.add_argument(
         "--correction-provider",
         type=str,
         default=None,
@@ -290,10 +277,6 @@ class ToolTaskExecutor:
         self.task1_poses: list[sm.SE3] = []
         self.task2_poses: list[sm.SE3] = []
         self.pregrasp_tcp: sm.SE3 = T_TCP_GRIPPER_TCP
-        self.grasped_tool_tcp: sm.SE3 = _resolve_pose(
-            args.grasped_tool_tcp, T_TCP_GRASPED_TOOL_TCP, row_index=0
-        )
-        self.active_tcp: sm.SE3 = self.pregrasp_tcp
         self.correction_provider = load_correction_provider(args.correction_provider)
         self._t0 = time.monotonic()
         self.robot: Optional[Robot] = None
@@ -479,7 +462,6 @@ class ToolTaskExecutor:
         print(f"  Task2 tau scale:    {self.task2_tau_scale:.2f}x")
         print(f"  Dry-run mode:       {self.args.dry_run}")
         print(f"  Pre-grasp TCP:      {self.pregrasp_tcp}")
-        print(f"  Grasped tool TCP:   {self.grasped_tool_tcp}")
 
         print("\nCalibration Checklist:")
         print("  1) Measure flange->tool TCP and set T_TCP_GRIPPER_TCP in real/config.py")
@@ -516,7 +498,6 @@ class ToolTaskExecutor:
     def _connect_robot(self) -> None:
         _logger.info("Connecting to robot at %s", self.args.robot_ip)
         self.robot = Robot(robot_ip=self.args.robot_ip, T_tcp_gripper_tcp=self.pregrasp_tcp)
-        self.active_tcp = self.pregrasp_tcp
         self.gripper = WSG50Gripper(
             host=WSG50_IP,
             port=WSG50_PORT,
@@ -549,13 +530,6 @@ class ToolTaskExecutor:
             return
         self.robot.servo_stop()
         time.sleep(0.05)
-
-    def _update_active_tcp(self, new_tcp: sm.SE3, reason: str) -> None:
-        if self.robot is None:
-            return
-        self.robot.set_tool_tcp(new_tcp)
-        self.active_tcp = new_tcp
-        _logger.info("Active TCP updated (%s): %s", reason, _format_pose6(new_tcp))
 
     def _reanchor_task_rollouts_from_current_pose(self) -> None:
         if self.robot is None:
@@ -637,12 +611,6 @@ class ToolTaskExecutor:
             lines = self.gripper.move(WSG50_CLOSE_WIDTH_MM, WSG50_GRIP_SPEED_MM_S)
             _logger.info("WSG50 fallback MOVE response: %s", " | ".join(lines))
 
-    def _switch_to_grasped_tcp(self) -> None:
-        if self.robot is None:
-            return
-        self._update_active_tcp(self.grasped_tool_tcp, reason="tool_grasped")
-        self._reanchor_task_rollouts_from_current_pose()
-
     def execute(self) -> None:
         try:
             self.correction_provider.reset()
@@ -666,7 +634,7 @@ class ToolTaskExecutor:
             self._finish_servo_segment()
 
             self._grip_object()
-            self._switch_to_grasped_tcp()
+            self._reanchor_task_rollouts_from_current_pose()
 
             self._move_to_pose(self.task1_poses[0])
             self._servo_phase("task1", self.task1_poses, apply_tcp_correction=True)
