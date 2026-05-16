@@ -184,9 +184,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Execute approach-grasp-task DMPs on UR5e with gripper."
     )
-    parser.add_argument("--approach-demo", required=True, help="Path to approach demo CSV file.")
-    parser.add_argument("--task1-demo", required=True, help="Path to task1 demo CSV file.")
-    parser.add_argument("--task2-demo", required=True, help="Path to task2 demo CSV file.")
+    parser.add_argument("--approach-demo", default=None, help="Path to approach demo CSV file.")
+    parser.add_argument("--task1-demo", default=None, help="Path to task1 demo CSV file.")
+    parser.add_argument("--task2-demo", default=None, help="Path to task2 demo CSV file.")
     parser.add_argument("--robot-ip", default=ROBOT_IP, help=f"UR5e controller IP (default: {ROBOT_IP}).")
     parser.add_argument("--servo-rate", type=float, default=400.0, help="Servo loop frequency in Hz.")
     parser.add_argument("--approach-tau-scale", type=float, default=1.0)
@@ -224,6 +224,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tcp-drift-rotation-rad", type=float, default=0.35)
     parser.add_argument("--max-phase-jump-m", type=float, default=0.02)
     parser.add_argument("--max-phase-jump-rad", type=float, default=0.35)
+    parser.add_argument(
+        "--hold-only",
+        action="store_true",
+        help="Hold current live TCP pose continuously instead of running approach/task trajectories.",
+    )
+    parser.add_argument(
+        "--hold-apply-correction",
+        action="store_true",
+        help="Apply correction provider while holding in --hold-only mode.",
+    )
+    parser.add_argument(
+        "--hold-phase",
+        type=str,
+        default="hold",
+        help="Phase label passed to correction provider during --hold-only mode.",
+    )
     parser.add_argument("--speed", type=float, default=0.05)
     parser.add_argument("--acc", type=float, default=0.1)
     parser.add_argument("--dry-run", action="store_true")
@@ -248,30 +264,23 @@ class ToolTaskExecutor:
                 args.task2_tau_scale if args.task2_tau_scale is not None else shared_task_tau
             )
 
-        _logger.info(
-            "Loading demos from %s, %s and %s",
-            args.approach_demo,
-            args.task1_demo,
-            args.task2_demo,
-        )
-        self.approach_demo_poses, self.approach_ts, _ = _load_demo_data(args.approach_demo)
-        self.task1_demo_poses, self.task1_ts, _ = _load_demo_data(args.task1_demo)
-        self.task2_demo_poses, self.task2_ts, _ = _load_demo_data(args.task2_demo)
-
         self.approach_dmp = DMPCartesian(roto_dilatation=True)
         self.task1_dmp = DMPCartesian(roto_dilatation=True)
         self.task2_dmp = DMPCartesian(roto_dilatation=True)
         self._approach_loaded_with_time = False
         self._task1_loaded_with_time = False
         self._task2_loaded_with_time = False
-        self._train_dmp(self.approach_dmp, self.approach_demo_poses, self.approach_ts, "approach")
-        self._train_dmp(self.task1_dmp, self.task1_demo_poses, self.task1_ts, "task1")
-        self._train_dmp(self.task2_dmp, self.task2_demo_poses, self.task2_ts, "task2")
+        self.approach_demo_poses: list[sm.SE3] = []
+        self.task1_demo_poses: list[sm.SE3] = []
+        self.task2_demo_poses: list[sm.SE3] = []
+        self.approach_ts: Optional[np.ndarray] = None
+        self.task1_ts: Optional[np.ndarray] = None
+        self.task2_ts: Optional[np.ndarray] = None
 
-        self.approach_start_pose: sm.SE3 = self.approach_demo_poses[0]
-        self.tool_contact_pose: sm.SE3 = self.approach_demo_poses[-1]
-        self.task_mid_pose: sm.SE3 = self.task1_demo_poses[-1]
-        self.task_goal_pose: sm.SE3 = self.task2_demo_poses[-1]
+        self.approach_start_pose: sm.SE3 = sm.SE3()
+        self.tool_contact_pose: sm.SE3 = sm.SE3()
+        self.task_mid_pose: sm.SE3 = sm.SE3()
+        self.task_goal_pose: sm.SE3 = sm.SE3()
 
         self.approach_poses: list[sm.SE3] = []
         self.task1_poses: list[sm.SE3] = []
@@ -281,6 +290,33 @@ class ToolTaskExecutor:
         self._t0 = time.monotonic()
         self.robot: Optional[Robot] = None
         self.gripper: Optional[WSG50Gripper] = None
+
+        if not args.hold_only:
+            self._initialize_demo_data()
+
+    def _initialize_demo_data(self) -> None:
+        if not self.args.approach_demo or not self.args.task1_demo or not self.args.task2_demo:
+            raise ValueError(
+                "--approach-demo, --task1-demo and --task2-demo are required unless --hold-only is set."
+            )
+        _logger.info(
+            "Loading demos from %s, %s and %s",
+            self.args.approach_demo,
+            self.args.task1_demo,
+            self.args.task2_demo,
+        )
+        self.approach_demo_poses, self.approach_ts, _ = _load_demo_data(self.args.approach_demo)
+        self.task1_demo_poses, self.task1_ts, _ = _load_demo_data(self.args.task1_demo)
+        self.task2_demo_poses, self.task2_ts, _ = _load_demo_data(self.args.task2_demo)
+
+        self._train_dmp(self.approach_dmp, self.approach_demo_poses, self.approach_ts, "approach")
+        self._train_dmp(self.task1_dmp, self.task1_demo_poses, self.task1_ts, "task1")
+        self._train_dmp(self.task2_dmp, self.task2_demo_poses, self.task2_ts, "task2")
+
+        self.approach_start_pose = self.approach_demo_poses[0]
+        self.tool_contact_pose = self.approach_demo_poses[-1]
+        self.task_mid_pose = self.task1_demo_poses[-1]
+        self.task_goal_pose = self.task2_demo_poses[-1]
 
     def _train_dmp(
         self,
@@ -578,6 +614,21 @@ class ToolTaskExecutor:
             if self.servo_dt > 0:
                 time.sleep(self.servo_dt)
 
+    def _hold_pose(self, target_pose: sm.SE3, phase: str, apply_tcp_correction: bool) -> None:
+        assert self.robot is not None
+        _logger.info(
+            "Holding pose indefinitely (phase=%s, correction=%s). Press Ctrl+C to stop.",
+            phase,
+            apply_tcp_correction,
+        )
+        while True:
+            command_pose = target_pose
+            if apply_tcp_correction:
+                command_pose = self._compute_slip_corrected_pose(target_pose, phase)
+            self.robot.servoL(command_pose, speed=self.args.speed, acc=self.args.acc, dt=self.servo_dt)
+            if self.servo_dt > 0:
+                time.sleep(self.servo_dt)
+
     def _open_gripper(self) -> None:
         if self.gripper is None:
             return
@@ -615,6 +666,21 @@ class ToolTaskExecutor:
         try:
             self.correction_provider.reset()
             self._t0 = time.monotonic()
+            if self.args.hold_only:
+                self._connect_robot()
+                # Allow state interfaces to settle before sampling the hold pose.
+                time.sleep(0.1)
+                if self.robot is None:
+                    raise RuntimeError("Robot connection was not established.")
+                hold_pose = self.robot.T_base_tcp
+                _logger.info("Captured hold target pose from current TCP state.")
+                self._hold_pose(
+                    target_pose=hold_pose,
+                    phase=self.args.hold_phase,
+                    apply_tcp_correction=self.args.hold_apply_correction,
+                )
+                return
+
             self._setup_rollouts()
             if not self._safety_check():
                 raise RuntimeError("Safety check failed")
