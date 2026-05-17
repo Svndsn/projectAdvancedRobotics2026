@@ -312,7 +312,8 @@ class GelSightPCASlipCorrectionProvider:
 
         self._last_valid_sample_timestamp = float(sample["timestamp"])
         alpha = min(max(self.smoothing_alpha, 0.0), 1.0)
-        measurement = np.array([x_m, y_m, 0.0], dtype=float)
+        # Map GelSight slip translation to tool-frame axes (z, x).
+        measurement = np.array([y_m, 0.0, x_m], dtype=float)
         self._filtered_translation = alpha * measurement + (1.0 - alpha) * self._filtered_translation
         self._filtered_rotation_rad = alpha * rotation_rad + (1.0 - alpha) * self._filtered_rotation_rad
         return self._build_pose()
